@@ -1,0 +1,15 @@
+[package]
+name = "scorched"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+macroquad = "0.4"
+font8x8 = "0.3"
+
+# Keep debug builds fast enough to play (pixel loops are hot).
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
