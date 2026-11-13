@@ -6,7 +6,7 @@ Built on [macroquad](https://macroquad.rs).
 
 ---
 
-![Listing](https://raw.githubusercontent.com/johnykvsky/scorched_earth_rust/master/scorch-earth-rust.jpg)
+![Listing](https://raw.githubusercontent.com/johnykvsky/scorched_earth_rust/master/scorched-earth-rust.png)
 
 ---
 
