@@ -10,7 +10,7 @@ use macroquad::rand::gen_range;
 pub enum AiKind {
     Moron,
     Shooter,
-    Cyborg,
+    Spoiler,
 }
 
 pub struct Plan {
@@ -51,7 +51,7 @@ pub fn plan(kind: AiKind, terrain: &Terrain, tanks: &[Tank], me: usize, wind: i3
     let t = &tanks[me];
     let enemies: Vec<usize> = (0..tanks.len()).filter(|&i| i != me && tanks[i].alive).collect();
     let target = match kind {
-        AiKind::Cyborg => *enemies.iter().min_by_key(|&&i| tanks[i].health).unwrap(),
+        AiKind::Spoiler => *enemies.iter().min_by_key(|&&i| tanks[i].health).unwrap(),
         _ => enemies[gen_range(0, enemies.len())],
     };
     let goal = tanks[target].center();
@@ -61,7 +61,7 @@ pub fn plan(kind: AiKind, terrain: &Terrain, tanks: &[Tank], me: usize, wind: i3
     let (samples, sees_wind, a_noise, p_noise) = match kind {
         AiKind::Moron => (30, false, 12, 120),
         AiKind::Shooter => (250, false, 2, 20),
-        AiKind::Cyborg => (500, true, 0, 5),
+        AiKind::Spoiler => (500, true, 0, 5),
     };
     let wind = if sees_wind { wind as f32 } else { 0.0 };
     let maxp = t.max_power().max(1);

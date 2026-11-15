@@ -67,14 +67,14 @@ Status legend: [x] in prototype · [~] partial/simplified · [ ] not yet
 - [~] Inventory (prototype: fixed starting ammo refilled every round)
 
 ## Computer players
-- [x] Moron, [~] Shooter, [~] Cyborg (prototype's "Cyborg" really behaves like the original Spoiler)
-- [ ] Poolshark (banks off walls), Tosser (corrects aim), Chooser (picks best method), Spoiler (near-perfect, wind-aware)
+- [x] Moron, [~] Shooter, [~] Spoiler (wind-aware prototype aiming; original AI algorithms are batch 16)
+- [ ] Poolshark (banks off walls), Tosser (corrects aim), Chooser (picks best method), Cyborg (smart targeting)
 - [ ] Unknown (random personality)
 - [ ] AI buying in shop, using shields/parachutes
 
 ## Presentation
 - [x] Low-res 640×480 framebuffer, chunky VGA look, 8×16 DOS-style font
-- [x] Grey bevelled status bar (player, power, angle, weapon, wind)
+- [x] Single-row bevelled HUD (power, 0–90 angle, player, weapon icon and ammo); wind in the sky
 - [x] Explosions with colour cycling
 - [x] Projectile trails
 - [x] "Talking tanks" speech bubbles (own phrases, not the original's)

@@ -12,7 +12,7 @@ pub const POWER_K: f32 = 0.45;
 const SIM_DT: f32 = 1.0 / 600.0;
 const SETTLE_RATE: f32 = 240.0; // dirt fall, px/s
 const FALL_RATE: f32 = 120.0; // tank fall, px/s
-const HUD_H: i32 = 40;
+const HUD_H: i32 = 22;
 const INF: u32 = u32::MAX;
 const MAX_PLAYERS: usize = 8;
 
@@ -58,28 +58,36 @@ pub enum WKind {
     Tracer,
 }
 
+#[derive(Clone, Copy)]
+pub enum Damage {
+    /// Position in the original weapon table, which includes unimplemented weapons.
+    Weapon(usize),
+    /// Prototype death blasts keep their existing strength until batch 21.
+    Death,
+}
+
 pub struct Weapon {
     pub name: &'static str,
     pub kind: WKind,
     pub radius: f32,
-    pub damage: f32,
+    pub damage: Damage,
     pub ammo: u32,
 }
 
-const fn wpn(name: &'static str, kind: WKind, radius: f32, damage: f32, ammo: u32) -> Weapon {
-    Weapon { name, kind, radius, damage, ammo }
+const fn wpn(name: &'static str, kind: WKind, radius: f32, index: usize, ammo: u32) -> Weapon {
+    Weapon { name, kind, radius, damage: Damage::Weapon(index), ammo }
 }
 
 pub const WEAPONS: [Weapon; 9] = [
-    wpn("Baby Missile", WKind::Blast, 10.0, 35.0, INF),
-    wpn("Missile", WKind::Blast, 20.0, 60.0, 10),
-    wpn("Baby Nuke", WKind::Blast, 40.0, 90.0, 3),
-    wpn("Nuke", WKind::Blast, 75.0, 120.0, 1),
-    wpn("MIRV", WKind::Mirv, 20.0, 50.0, 2),
-    wpn("Funky Bomb", WKind::Funky, 25.0, 50.0, 2),
-    wpn("Roller", WKind::Roller, 20.0, 60.0, 4),
-    wpn("Dirt Ball", WKind::Dirt, 30.0, 0.0, 4),
-    wpn("Tracer", WKind::Tracer, 0.0, 0.0, 20),
+    wpn("Baby Missile", WKind::Blast, 10.0, 0, INF),
+    wpn("Missile", WKind::Blast, 20.0, 1, 10),
+    wpn("Baby Nuke", WKind::Blast, 40.0, 2, 3),
+    wpn("Nuke", WKind::Blast, 75.0, 3, 1),
+    wpn("MIRV", WKind::Mirv, 20.0, 6, 2),
+    wpn("Funky Bomb", WKind::Funky, 25.0, 5, 2),
+    wpn("Roller", WKind::Roller, 20.0, 13, 4),
+    wpn("Dirt Ball", WKind::Dirt, 35.0, 26, 4),
+    wpn("Tracer", WKind::Tracer, 0.0, 10, 20),
 ];
 
 // ---------------------------------------------------------------- tanks
@@ -90,12 +98,8 @@ pub enum Ctrl {
     Ai(AiKind),
 }
 
-const CTRLS: [Ctrl; 4] = [
-    Ctrl::Human,
-    Ctrl::Ai(AiKind::Moron),
-    Ctrl::Ai(AiKind::Shooter),
-    Ctrl::Ai(AiKind::Cyborg),
-];
+const CTRLS: [Ctrl; 4] =
+    [Ctrl::Human, Ctrl::Ai(AiKind::Moron), Ctrl::Ai(AiKind::Shooter), Ctrl::Ai(AiKind::Spoiler)];
 
 impl Ctrl {
     fn label(self) -> &'static str {
@@ -103,7 +107,7 @@ impl Ctrl {
             Ctrl::Human => "Human",
             Ctrl::Ai(AiKind::Moron) => "Moron",
             Ctrl::Ai(AiKind::Shooter) => "Shooter",
-            Ctrl::Ai(AiKind::Cyborg) => "Cyborg",
+            Ctrl::Ai(AiKind::Spoiler) => "Spoiler",
         }
     }
 }
@@ -170,7 +174,7 @@ struct Proj {
     weapon: usize,
     kind: PKind,
     radius: f32,
-    damage: f32,
+    damage: Damage,
     age: f32,
 }
 
@@ -178,13 +182,13 @@ enum Step {
     Alive,
     Gone,
     Split,
-    Hit(Vec2, bool),
+    Hit(Vec2, Option<usize>),
 }
 
 struct Explosion {
     pos: Vec2,
     radius: f32,
-    damage: f32,
+    damage: Damage,
     owner: usize,
     dirt: bool,
     t: f32,
@@ -192,7 +196,7 @@ struct Explosion {
 }
 
 impl Explosion {
-    fn new(pos: Vec2, radius: f32, damage: f32, owner: usize, dirt: bool) -> Self {
+    fn new(pos: Vec2, radius: f32, damage: Damage, owner: usize, dirt: bool) -> Self {
         Explosion { pos, radius, damage, owner, dirt, t: 0.0, dur: 0.4 + radius / 100.0 }
     }
 }
@@ -213,6 +217,20 @@ struct KeyRep {
 }
 
 impl KeyRep {
+    /// Original timer rates, accumulated so input speed is independent of frame rate.
+    fn aim_steps(&mut self, k: KeyCode, shift: bool, alt: bool) -> i32 {
+        let pressed = is_key_pressed(k);
+        let down = is_key_down(k);
+        let i = match self.held.iter().position(|e| e.0 == k) {
+            Some(i) => i,
+            None => {
+                self.held.push((k, 0.0, 0.0));
+                self.held.len() - 1
+            }
+        };
+        aim_repeat_steps(&mut self.held[i].1, pressed, down, self.dt, shift, alt)
+    }
+
     fn hit(&mut self, k: KeyCode) -> bool {
         if is_key_pressed(k) {
             self.held.retain(|e| e.0 != k);
@@ -224,7 +242,9 @@ impl KeyRep {
             return false;
         }
         let dt = self.dt;
-        let Some(e) = self.held.iter_mut().find(|e| e.0 == k) else { return false };
+        let Some(e) = self.held.iter_mut().find(|e| e.0 == k) else {
+            return false;
+        };
         e.1 += dt;
         if e.1 < 0.3 {
             return false;
@@ -237,6 +257,66 @@ impl KeyRep {
             false
         }
     }
+}
+
+/// Keep player identities stable while cycling through battlefield positions.
+fn next_tank(tanks: &[Tank], current: usize) -> usize {
+    let position = (tanks[current].x, current);
+    tanks
+        .iter()
+        .enumerate()
+        .filter(|(i, t)| *i != current && t.alive)
+        .min_by_key(|(i, t)| ((t.x, *i) <= position, t.x, *i))
+        .map_or(current, |(i, _)| i)
+}
+
+fn explosion_damage(distance: f32, radius: f32, damage: Damage) -> i32 {
+    match damage {
+        Damage::Weapon(index) => {
+            if radius <= 0.0 || distance >= radius {
+                return 0;
+            }
+            let damage =
+                (((radius - distance) * 100.0 / radius).trunc() as i32) * (index as i32 + 1);
+            if damage > 100 {
+                110
+            } else {
+                damage
+            }
+        }
+        Damage::Death => {
+            let reach = radius + 6.0;
+            if distance < reach {
+                (40.0 * (1.0 - distance / reach)).ceil() as i32
+            } else {
+                0
+            }
+        }
+    }
+}
+
+fn display_angle(angle: i32) -> i32 {
+    90 - (angle - 90).abs()
+}
+
+/// One degree / power unit per timer step; PgUp/PgDn apply 15 units per step.
+fn aim_repeat_steps(
+    elapsed: &mut f32,
+    pressed: bool,
+    down: bool,
+    dt: f32,
+    shift: bool,
+    alt: bool,
+) -> i32 {
+    if !down || pressed || alt {
+        *elapsed = 0.0;
+        return i32::from(pressed);
+    }
+    let period = if shift { 30.0 } else { 15.0 } / (1_193_182.0 / 327.0);
+    *elapsed += dt;
+    let steps = (*elapsed / period).floor() as i32;
+    *elapsed -= steps as f32 * period;
+    steps
 }
 
 // ---------------------------------------------------------------- game
@@ -371,7 +451,10 @@ impl Game {
         }
         if d != 0 {
             match self.menu_sel {
-                0 => self.n_players = (self.n_players as i32 + d).clamp(2, MAX_PLAYERS as i32) as usize,
+                0 => {
+                    self.n_players =
+                        (self.n_players as i32 + d).clamp(2, MAX_PLAYERS as i32) as usize
+                }
                 1 => self.n_rounds = (self.n_rounds as i32 + d).clamp(1, 99) as u32,
                 s if s < 2 + self.n_players => {
                     let i = CTRLS.iter().position(|c| *c == self.cfg[s - 2]).unwrap();
@@ -470,25 +553,15 @@ impl Game {
                 let shift = is_key_down(KeyCode::LeftShift) || is_key_down(KeyCode::RightShift);
                 let k = &mut self.keys;
                 let t = &mut self.tanks[cur];
-                let step = if shift { 5 } else { 1 };
-                if k.hit(KeyCode::Left) {
-                    t.angle = (t.angle + step).min(180);
-                }
-                if k.hit(KeyCode::Right) {
-                    t.angle = (t.angle - step).max(0);
-                }
-                if k.hit(KeyCode::Up) {
-                    t.power = (t.power + step * 5).min(t.max_power());
-                }
-                if k.hit(KeyCode::Down) {
-                    t.power = (t.power - step * 5).max(0);
-                }
-                if k.hit(KeyCode::PageUp) {
-                    t.power = (t.power + 100).min(t.max_power());
-                }
-                if k.hit(KeyCode::PageDown) {
-                    t.power = (t.power - 100).max(0);
-                }
+                let alt = is_key_down(KeyCode::LeftAlt) || is_key_down(KeyCode::RightAlt);
+                let angle_delta = k.aim_steps(KeyCode::Left, shift, alt)
+                    - k.aim_steps(KeyCode::Right, shift, alt);
+                let power_delta = k.aim_steps(KeyCode::Up, shift, alt)
+                    - k.aim_steps(KeyCode::Down, shift, alt)
+                    + 15 * (k.aim_steps(KeyCode::PageUp, shift, alt)
+                        - k.aim_steps(KeyCode::PageDown, shift, alt));
+                t.angle = (t.angle + angle_delta).clamp(0, 180);
+                t.power = (t.power + power_delta).clamp(0, t.max_power());
                 if is_key_pressed(KeyCode::Tab) {
                     let n = WEAPONS.len();
                     let d = if shift { n - 1 } else { 1 };
@@ -607,7 +680,7 @@ impl Game {
                 } else {
                     self.tanks[killer].kills += 1;
                 }
-                self.expls.push(Explosion::new(c, 30.0, 40.0, killer, false));
+                self.expls.push(Explosion::new(c, 30.0, Damage::Death, killer, false));
                 if gen_range(0.0f32, 1.0) < 0.6 {
                     self.say(DEATH_TALK[gen_range(0, DEATH_TALK.len())], x, y);
                 }
@@ -629,15 +702,7 @@ impl Game {
             self.set_phase(Phase::RoundOver);
             return;
         }
-        let n = self.tanks.len();
-        let mut next = self.current;
-        loop {
-            next = (next + 1) % n;
-            if self.tanks[next].alive {
-                break;
-            }
-        }
-        self.current = next;
+        self.current = next_tank(&self.tanks, self.current);
         self.begin_turn();
     }
 
@@ -690,6 +755,9 @@ impl Game {
                     for k in -2..=2 {
                         let mut w = p;
                         w.kind = PKind::Bomblet;
+                        w.weapon = 1; // Each child is a Missile, not the MIRV carrier.
+                        w.radius = WEAPONS[1].radius;
+                        w.damage = WEAPONS[1].damage;
                         w.vel.x += k as f32 * 30.0;
                         next.push(w);
                     }
@@ -711,11 +779,11 @@ impl Game {
                 if !(0..W).contains(&nx) {
                     return Step::Gone;
                 }
-                if self.tank_at(nx, y, p.owner, 1.0).is_some() {
-                    return Step::Hit(p.pos, true);
+                if let Some(victim) = self.tank_at(nx, y, p.owner, 1.0) {
+                    return Step::Hit(vec2(nx as f32, y as f32), Some(victim));
                 }
                 if self.terrain.solid(nx, y) {
-                    return Step::Hit(p.pos, false); // reached a valley
+                    return Step::Hit(p.pos, None); // reached a valley
                 }
                 while !self.terrain.solid(nx, y + 1) {
                     y += 1;
@@ -724,7 +792,7 @@ impl Game {
                 self.trail.push((nx, y, self.tanks[p.owner].color));
             }
             if p.age > 15.0 {
-                return Step::Hit(p.pos, false);
+                return Step::Hit(p.pos, None);
             }
             return Step::Alive;
         }
@@ -741,14 +809,14 @@ impl Game {
             return Step::Gone;
         }
         if y >= H {
-            return Step::Hit(vec2(p.pos.x, (H - 1) as f32), false);
+            return Step::Hit(vec2(p.pos.x, (H - 1) as f32), None);
         }
         if y >= 0 {
             if self.terrain.solid(x, y) {
-                return Step::Hit(p.pos, false);
+                return Step::Hit(p.pos, None);
             }
-            if self.tank_at(x, y, p.owner, p.age).is_some() {
-                return Step::Hit(p.pos, true);
+            if let Some(victim) = self.tank_at(x, y, p.owner, p.age) {
+                return Step::Hit(p.pos, Some(victim));
             }
             let c = self.tanks[p.owner].color;
             if self.trail.last().map_or(true, |&(lx, ly, _)| lx != x || ly != y) {
@@ -758,14 +826,26 @@ impl Game {
         Step::Alive
     }
 
-    fn impact(&mut self, p: Proj, pos: Vec2, on_tank: bool, spawn: &mut Vec<Proj>) {
+    fn impact(&mut self, p: Proj, pos: Vec2, on_tank: Option<usize>, spawn: &mut Vec<Proj>) {
         let kind = WEAPONS[p.weapon].kind;
-        let boom = |g: &mut Game, r: f32, d: f32, dirt: bool| {
+        // Non-damaging weapons and pre-apogee MIRVs must not kill on contact.
+        if p.kind != PKind::Carrier && !matches!(kind, WKind::Tracer | WKind::Dirt) {
+            if let Some(victim) = on_tank {
+                let t = &mut self.tanks[victim];
+                if t.health > 0 {
+                    t.health = 0;
+                    t.power = 0;
+                    t.last_hit = Some(p.owner);
+                }
+            }
+        }
+        let boom = |g: &mut Game, r: f32, d: Damage, dirt: bool| {
             g.expls.push(Explosion::new(pos, r, d, p.owner, dirt));
         };
         match (p.kind, kind) {
+            (PKind::Carrier, _) => {} // Before apogee, any impact is a dud.
             (PKind::Shell, WKind::Tracer) => {}
-            (PKind::Shell, WKind::Dirt) => boom(self, p.radius, 0.0, true),
+            (PKind::Shell, WKind::Dirt) => boom(self, p.radius, p.damage, true),
             (PKind::Shell, WKind::Funky) => {
                 boom(self, p.radius, p.damage, false);
                 for _ in 0..6 {
@@ -774,20 +854,24 @@ impl Game {
                         vel: vec2(gen_range(-120.0, 120.0), gen_range(-220.0, -100.0)),
                         kind: PKind::Bomblet,
                         radius: p.radius * 0.6,
-                        damage: p.damage * 0.6,
+                        damage: p.damage,
                         age: 0.0,
                         ..p
                     });
                 }
             }
-            (PKind::Shell, WKind::Roller) if !on_tank => {
+            (PKind::Shell, WKind::Roller) if on_tank.is_none() => {
                 let (x, mut y) = (pos.x as i32, pos.y as i32);
                 while self.terrain.solid(x, y) && y > 0 {
                     y -= 1;
                 }
                 let (l, r) = (self.terrain.surface(x - 4), self.terrain.surface(x + 4));
                 let dir = if l != r {
-                    if l > r { -1 } else { 1 }
+                    if l > r {
+                        -1
+                    } else {
+                        1
+                    }
                 } else if p.vel.x < 0.0 {
                     -1
                 } else {
@@ -810,12 +894,16 @@ impl Game {
             return;
         }
         self.terrain.carve(cx, cy, r);
-        let reach = e.radius + 6.0;
-        for t in self.tanks.iter_mut().filter(|t| t.alive) {
-            let d = t.center().distance(e.pos);
-            if d < reach {
-                let dmg = (e.damage * (1.0 - d / reach)).ceil() as i32;
+        for t in self.tanks.iter_mut().filter(|t| t.alive && t.health > 0) {
+            let point = match e.damage {
+                Damage::Weapon(_) => vec2(t.x as f32, t.y as f32),
+                Damage::Death => t.center(),
+            };
+            let d = point.distance(e.pos);
+            let dmg = explosion_damage(d, e.radius, e.damage);
+            if dmg > 0 {
                 t.health -= dmg;
+                t.power = t.power.min(t.max_power());
                 t.last_hit = Some(e.owner);
             }
         }
@@ -872,7 +960,13 @@ impl Game {
                 order.sort_by_key(|t| (std::cmp::Reverse(t.wins), std::cmp::Reverse(t.kills)));
                 let mut lines = vec!["FINAL STANDINGS".to_string(), String::new()];
                 for (i, t) in order.iter().enumerate() {
-                    lines.push(format!("{}. {:<12} wins {:>2}  kills {:>3}", i + 1, t.name, t.wins, t.kills));
+                    lines.push(format!(
+                        "{}. {:<12} wins {:>2}  kills {:>3}",
+                        i + 1,
+                        t.name,
+                        t.wins,
+                        t.kills
+                    ));
                 }
                 lines.push(String::new());
                 lines.push("Press any key".to_string());
@@ -885,27 +979,25 @@ impl Game {
     fn draw_hud(&self, fb: &mut Fb) {
         fb.bevel(0, 0, W, HUD_H);
         let t = &self.tanks[self.current];
-        fb.rect(8, 6, 10, 12, t.color);
-        fb.frame(8, 6, 10, 12, Rgb::BLACK);
-        fb.text(24, 4, &t.name, Rgb::BLACK);
-        fb.text(200, 4, &format!("Power: {:4}", t.power), Rgb::BLACK);
-        fb.text(340, 4, &format!("Angle: {:3}", t.angle), Rgb::BLACK);
-        fb.text(470, 4, &format!("Health: {:3}", t.health.max(0)), Rgb::BLACK);
+        fb.text(8, 3, &format!("Power: {:4}", t.power), Rgb::BLACK);
+        fb.text(112, 3, &format!("Angle: {:2}", display_angle(t.angle)), Rgb::BLACK);
+        fb.rect(208, 5, 8, 12, t.color);
+        fb.text(224, 3, &t.name.chars().take(14).collect::<String>(), Rgb::BLACK);
 
+        // Small bomb icon, followed by ammunition and the selected weapon.
+        fb.rect(352, 8, 8, 8, Rgb::BLACK);
+        fb.rect(354, 6, 4, 2, Rgb::BLACK);
+        fb.line(356, 6, 360, 3, Rgb::BLACK);
         let ammo = t.ammo[t.weapon];
-        let w = if ammo == INF {
-            WEAPONS[t.weapon].name.to_string()
-        } else {
-            format!("{}: {}", WEAPONS[t.weapon].name, ammo)
-        };
-        fb.text(8, 21, &w, Rgb::BLACK);
+        let ammo = if ammo == INF { 99 } else { ammo };
+        fb.text(368, 3, &format!("{:2} {}", ammo, WEAPONS[t.weapon].name), Rgb::BLACK);
+
         let wind = match self.wind {
-            0 => "Wind: calm".to_string(),
-            v if v > 0 => format!("Wind: {} >>", v),
-            v => format!("Wind: << {}", -v),
+            0 => "No Wind".to_string(),
+            v if v > 0 => format!("{} -->", v),
+            v => format!("<-- {}", -v),
         };
-        fb.text(270, 21, &wind, Rgb::BLACK);
-        fb.text(470, 21, &format!("Round {}/{}", self.round, self.n_rounds), Rgb::BLACK);
+        fb.text(W - text_w(&wind) - 8, HUD_H + 6, &wind, Rgb(100, 200, 255));
     }
 
     fn draw_menu(&self, fb: &mut Fb) {
@@ -942,11 +1034,12 @@ impl Game {
         fb.text_centered(py + ph - 24, help, Rgb::DARK);
 
         let keys = [
-            "In game:  Left/Right angle   Up/Down power   PgUp/PgDn power x100",
-            "Shift = faster   Tab weapon   Space fire   Esc menu",
+            "In game:  Left/Right angle   Up/Down power   PgUp/PgDn power x15",
+            "Shift = slower  Alt = single step  Tab / Shift-Tab = weapon",
+            "Space / Enter = fire   Esc = menu",
         ];
         for (i, k) in keys.iter().enumerate() {
-            let y = H - 44 + i as i32 * 18;
+            let y = H - 62 + i as i32 * 18;
             fb.rect(W / 2 - text_w(k) / 2 - 4, y - 1, text_w(k) + 8, 18, Rgb::BLACK);
             fb.text_centered(y, k, Rgb::WHITE);
         }
@@ -1005,5 +1098,190 @@ fn dialog(fb: &mut Fb, lines: &[String]) {
     fb.bevel(x, y, w, h);
     for (i, l) in lines.iter().enumerate() {
         fb.text_centered(y + 12 + i as i32 * 18, l, Rgb::BLACK);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn game() -> Game {
+        let mut g = Game::new();
+        g.n_players = 3;
+        g.start_game();
+        for (i, t) in g.tanks.iter_mut().enumerate() {
+            t.x = 100 + i as i32 * 200;
+            t.y = 100;
+        }
+        g
+    }
+
+    fn projectile(weapon: usize, kind: PKind) -> Proj {
+        Proj {
+            pos: vec2(100.0, 80.0),
+            vel: vec2(0.0, -1.0),
+            owner: 0,
+            weapon,
+            kind,
+            radius: WEAPONS[weapon].radius,
+            damage: WEAPONS[weapon].damage,
+            age: 1.0,
+        }
+    }
+
+    #[test]
+    fn aiming_repeat_uses_original_rates_at_different_frame_rates() {
+        for fps in [30, 60, 144] {
+            for shift in [false, true] {
+                let mut elapsed = 0.0;
+                let mut steps = aim_repeat_steps(&mut elapsed, true, true, 0.0, shift, false);
+                for _ in 0..fps {
+                    steps +=
+                        aim_repeat_steps(&mut elapsed, false, true, 1.0 / fps as f32, shift, false);
+                }
+                assert_eq!(steps, if shift { 122 } else { 244 });
+            }
+        }
+    }
+
+    #[test]
+    fn alt_only_changes_once_per_press_and_release_resets_repeat() {
+        let mut elapsed = 0.0;
+        assert_eq!(aim_repeat_steps(&mut elapsed, true, true, 0.016, false, true), 1);
+        for _ in 0..100 {
+            assert_eq!(aim_repeat_steps(&mut elapsed, false, true, 0.016, false, true), 0);
+        }
+        assert_eq!(aim_repeat_steps(&mut elapsed, false, false, 0.016, false, true), 0);
+        assert_eq!(aim_repeat_steps(&mut elapsed, true, true, 0.016, false, true), 1);
+        assert_eq!(elapsed, 0.0);
+    }
+
+    #[test]
+    fn displayed_angles_mirror_about_vertical() {
+        for (internal, shown) in [(0, 0), (35, 35), (90, 90), (145, 35), (180, 0)] {
+            assert_eq!(display_angle(internal), shown);
+        }
+    }
+
+    #[test]
+    fn radial_damage_truncates_before_multiplying_and_only_caps_above_100() {
+        assert_eq!(explosion_damage(5.05, 10.0, Damage::Weapon(0)), 49);
+        assert_eq!(explosion_damage(10.1, 20.0, Damage::Weapon(1)), 98);
+        assert_eq!(explosion_damage(10.0, 20.0, Damage::Weapon(1)), 100);
+        assert_eq!(explosion_damage(9.8, 20.0, Damage::Weapon(1)), 110);
+        assert_eq!(explosion_damage(20.0, 20.0, Damage::Weapon(1)), 0);
+        assert_eq!(explosion_damage(21.0, 20.0, Damage::Weapon(1)), 0);
+        assert_eq!(explosion_damage(0.0, 0.0, Damage::Weapon(1)), 0);
+        assert_eq!(explosion_damage(0.0, 10.0, Damage::Weapon(0)), 100);
+    }
+
+    #[test]
+    fn blast_measures_distance_to_base_and_preserves_lethal_hit_credit() {
+        let mut g = game();
+        g.tanks[1].x = 100;
+        // Base at (100,100) is exactly on the edge; centre (100,96) is inside.
+        g.apply_explosion(Explosion::new(vec2(100.0, 90.0), 10.0, Damage::Weapon(0), 0, false));
+        assert_eq!(g.tanks[1].health, 100);
+        g.apply_explosion(Explosion::new(vec2(100.0, 100.0), 10.0, Damage::Weapon(0), 0, false));
+        assert_eq!(g.tanks[1].health, 0);
+        assert_eq!(g.tanks[1].power, 0);
+        g.apply_explosion(Explosion::new(vec2(100.0, 100.0), 10.0, Damage::Weapon(0), 2, false));
+        assert_eq!(g.tanks[1].last_hit, Some(0));
+    }
+
+    #[test]
+    fn damaging_direct_hit_is_lethal_and_still_explodes() {
+        let mut g = game();
+        // At the top of the hull, a Baby Missile blast alone would miss the base.
+        let mut p = projectile(0, PKind::Shell);
+        p.pos = vec2(300.0, 90.0);
+        p.vel = vec2(0.0, 1.0);
+        g.projs.push(p);
+        g.step_projs(SIM_DT);
+        assert_eq!(g.tanks[1].health, 0);
+        assert_eq!(g.tanks[1].last_hit, Some(0));
+        assert_eq!(g.expls.len(), 1);
+    }
+
+    #[test]
+    fn harmless_weapons_and_unsplit_mirv_do_not_kill_on_contact() {
+        for (weapon, kind, explosions) in
+            [(8, PKind::Shell, 0), (7, PKind::Shell, 1), (4, PKind::Carrier, 0)]
+        {
+            for victim in [None, Some(1)] {
+                let mut g = game();
+                let mut spawn = Vec::new();
+                g.impact(projectile(weapon, kind), vec2(300.0, 90.0), victim, &mut spawn);
+                assert_eq!(g.tanks[1].health, 100);
+                assert_eq!(g.expls.len(), explosions);
+                assert!(spawn.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn mirv_splits_at_apex_into_five_missiles() {
+        let mut g = game();
+        g.projs.push(projectile(4, PKind::Carrier));
+        g.step_projs(0.01);
+        assert_eq!(g.projs.len(), 5);
+        for p in &g.projs {
+            assert!(p.kind == PKind::Bomblet);
+            assert_eq!(p.weapon, 1);
+            assert_eq!(p.radius, 20.0);
+            assert!(matches!(p.damage, Damage::Weapon(1)));
+        }
+        let velocities: Vec<f32> = g.projs.iter().map(|p| p.vel.x).collect();
+        for pair in velocities.windows(2) {
+            assert!((pair[1] - pair[0] - 30.0).abs() < 0.001);
+        }
+    }
+
+    #[test]
+    fn turns_follow_positions_wrap_and_skip_dead_players() {
+        let mut g = game();
+        g.tanks[0].x = 500;
+        g.tanks[1].x = 100;
+        g.tanks[2].x = 300;
+        assert_eq!(next_tank(&g.tanks, 0), 1);
+        assert_eq!(next_tank(&g.tanks, 1), 2);
+        assert_eq!(next_tank(&g.tanks, 2), 0);
+        g.tanks[2].alive = false;
+        assert_eq!(next_tank(&g.tanks, 1), 0);
+        assert_eq!(next_tank(&g.tanks, 0), 1);
+    }
+
+    #[test]
+    fn blast_sizes_and_health_limited_power_match_batch_zero() {
+        let mut g = game();
+        assert_eq!(WEAPONS[7].radius, 35.0);
+        assert_eq!(WEAPONS[6].radius, WEAPONS[1].radius);
+        assert!(matches!(WEAPONS[6].damage, Damage::Weapon(13)));
+        for health in [0, 1, 37, 100] {
+            g.tanks[0].health = health;
+            assert_eq!(g.tanks[0].max_power(), health * 10);
+        }
+    }
+
+    #[test]
+    fn render_batch_zero_preview() {
+        let mut g = game();
+        g.tanks[0].name = "Spoiler 1".into();
+        g.tanks[0].angle = 145;
+        g.tanks[0].power = 345;
+        g.tanks[0].weapon = 7;
+        g.current = 0;
+        g.wind = -7;
+        for t in &mut g.tanks {
+            t.y = g.terrain.surface(t.x) - 1;
+        }
+        let mut fb = Fb::new();
+        g.draw(&mut fb);
+        if let Ok(path) = std::env::var("SCORCHED_PREVIEW_PATH") {
+            // export_png expects bottom-up rows; our software framebuffer is top-down.
+            fb.img.bytes =
+                fb.img.bytes.chunks_exact((W * 4) as usize).rev().flatten().copied().collect();
+            fb.img.export_png(&path);
+        }
     }
 }

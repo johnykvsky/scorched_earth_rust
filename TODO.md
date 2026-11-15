@@ -115,37 +115,45 @@ own copy instead.
 
 Things the prototype already has, but does differently from the original:
 
-- [ ] **Shift slows things down** in the original, it doesn't speed them up ✅ **Q27**
+- [x] **Shift slows things down** in the original, it doesn't speed them up ✅ **Q27**
       *(p. 11)*: Shift = slow change, **Alt = change by exactly 1**. Holding an
-      arrow repeats and speeds up; PgUp/PgDn change quickly. Fix `update_aim`.
-- [ ] **Angle shown as 0–90** *(p. 9)*: "0 is horizontally level, 90 straight
+      arrow repeats at ~243 steps/s (~122 with Shift). Arrows change by 1;
+      PgUp/PgDn change power by 15 per step.
+- [x] **Angle shown as 0–90** *(p. 9)*: "0 is horizontally level, 90 straight
       up"; you see the direction from the tank's barrel. Internally keep 0–180,
       but show `90 - |angle - 90|` in the HUD.
-- [ ] **HUD layout** *(p. 9)*: one bar at the top:
+- [x] **HUD layout** *(p. 9)*: one bar at the top:
       `Power: 345   Angle: 35   <player name>   <weapon icon> 3 Dirt Clod`.
       **Wind is written in the sky** in the upper right, in light blue, with an
       arrow and a number, or `No Wind`. Move health off the main bar (it goes
       in the status bar, batch 8).
-- [ ] **MIRV**: five *Missile* warheads that split at the top of the arc. "If the
+- [x] **MIRV**: five *Missile* warheads that split at the top of the arc. "If the
       warhead hits something before reaching apogee, it will not explode"
-      *(p. 24)*. Ours explodes. Fix it.
-- [ ] **Dirt Ball radius 35** (ours is 30) *(p. 23)*. Funky Bomb's "80" in
+      *(p. 24)*. Pre-apogee impacts are now duds; all five children use Missile blasts.
+- [x] **Dirt Ball radius 35** (was 30) *(p. 23)*. Funky Bomb's "80" in
       the manual is **not** a blast radius: it's how far (±80 px) its bomblets
       scatter (see Q11). Others already match: Baby Missile 10, Missile 20,
       Baby Nuke 40, Nuke 75, MIRV 20, Roller 20.
-- [ ] **Damage law** (Q1, disassembled): `trunc((R - d) * 100 / R) * (weapon
+- [x] **Damage law** (Q1, disassembled): `trunc((R - d) * 100 / R) * (weapon
       index + 1)`, and if that's over 100, use 110. Only for `d < R`, measured
       to the tank's **base**, not its centre. A direct hit kills an unshielded
       tank.
-- [ ] **Roller** explodes with the force of a Missile (Baby Roller = Baby
-      Missile) *(p. 25)*. Already true, keep it.
-- [ ] **Rename our "Cyborg" to "Spoiler"**: perfect aim with wind is what the
+- [x] **Roller** explodes with the force of a Missile (Baby Roller = Baby
+      Missile) *(p. 25)*. Matching blast radii are retained. Damage uses each
+      weapon's original index per Q1 (Roller ×14, Missile ×2).
+- [x] **Rename our "Cyborg" to "Spoiler"**: perfect aim with wind is what the
       original calls Spoiler *(p. 7)*. The original Cyborg has the same aim plus
       nasty target choice (batch 16). Our "Shooter" (ignores wind) is only a
       stand-in until batch 16.
-- [ ] Max power = 10 × remaining health, 1000 at full *(p. 9)*. Already correct.
-- [ ] The player who goes first is random, then play goes **left to right**
-      *(p. 5)*. Ours goes in player order: sort turns by tank x position.
+- [x] Max power = 10 × remaining health, 1000 at full *(p. 9)*. Already correct.
+- [x] The player who goes first is random, then play goes **left to right**
+      *(p. 5)*. Cycle living tanks by x position, wrapping at the right edge;
+      preserve player identities between rounds.
+
+**Validation:** regression tests cover repeat rates and Alt, angle display,
+MIRV split/duds, blast damage and direct hits, blast sizes, health-limited
+power, and spatial turn order. A framebuffer preview covers the HUD layout.
+Side-by-side interactive comparison in DOSBox remains a manual check.
 
 **Done when:** controls and HUD feel like the original side by side in DOSBox.
 

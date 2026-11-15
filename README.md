@@ -56,17 +56,21 @@ the picture is scaled by whole numbers when it fits, keeping pixels sharp.
 
 In the menu use Up/Down to pick a line, Left/Right to change it (number of
 players, number of rounds, and whether each player is Human or a computer:
-Moron, Shooter or Cyborg), then Enter to start. Players take turns; the
+Moron, Shooter or Spoiler), then Enter to start. Players take turns; the
 current tank has a blinking arrow over it. The last tank standing wins the
-round, and the final screen ranks players by rounds won, then kills.
+round, and the final screen ranks players by rounds won, then kills. The first
+player each round is random; subsequent turns follow tank positions from left
+to right, wrapping at the edge.
 
 ## Controls
 
 | Key | Action |
 |---|---|
-| Left / Right | Barrel angle (hold Shift = x5) |
-| Up / Down | Power ±5 (hold Shift = ±25) |
-| PgUp / PgDn | Power ±100 |
+| Left / Right | Barrel angle ±1° |
+| Up / Down | Power ±1 |
+| PgUp / PgDn | Power ±15 |
+| Shift (hold) | Half the aiming repeat rate |
+| Alt (hold) | One aiming step per key press |
 | Tab / Shift+Tab | Next / previous weapon |
 | Space / Enter | Fire |
 | Esc | Back to menu (Esc in menu quits) |
