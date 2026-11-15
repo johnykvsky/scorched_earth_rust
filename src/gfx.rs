@@ -129,3 +129,48 @@ impl Fb {
 pub fn text_w(s: &str) -> i32 {
     s.chars().count() as i32 * 8
 }
+
+/// Shared by drawing and mouse hit testing, including integer scale and letterboxing.
+pub struct Viewport {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+    pub scale: f32,
+}
+
+impl Viewport {
+    pub fn new(width: f32, height: f32) -> Self {
+        let fit = (width / W as f32).min(height / H as f32).max(0.001);
+        let scale = if fit >= 1.0 { fit.floor() } else { fit };
+        let (w, h) = (W as f32 * scale, H as f32 * scale);
+        Self {
+            x: ((width - w) / 2.0).floor(),
+            y: ((height - h) / 2.0).floor(),
+            width: w,
+            height: h,
+            scale,
+        }
+    }
+
+    pub fn point(&self, x: f32, y: f32) -> (i32, i32) {
+        (((x - self.x) / self.scale).floor() as i32, ((y - self.y) / self.scale).floor() as i32)
+    }
+}
+
+#[cfg(test)]
+mod viewport_tests {
+    use super::*;
+    #[test]
+    fn mouse_coordinates_follow_integer_and_fractional_scaling_and_letterboxing() {
+        for (width, height) in [(1280.0, 960.0), (1500.0, 1000.0), (320.0, 240.0)] {
+            let view = Viewport::new(width, height);
+            assert_eq!(
+                view.point(view.x + 100.0 * view.scale, view.y + 200.0 * view.scale),
+                (100, 200)
+            );
+            assert_eq!(view.point(view.x - 1.0, view.y - 1.0).0 < 0, true);
+            assert_eq!(view.point(view.x + view.width, view.y + view.height), (W, H));
+        }
+    }
+}

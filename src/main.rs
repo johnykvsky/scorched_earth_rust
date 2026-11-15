@@ -1,7 +1,15 @@
 mod ai;
+mod economy;
 mod game;
 mod gfx;
+mod inventory;
+mod physics;
+mod settings;
+mod shop;
+mod tank;
 mod terrain;
+mod ui;
+mod weapons;
 
 use macroquad::prelude::*;
 
@@ -21,7 +29,15 @@ async fn main() {
     let mut fb = gfx::Fb::new();
     let tex = Texture2D::from_image(&fb.img);
     tex.set_filter(FilterMode::Nearest);
+    let path = match settings::config_path(std::env::args_os().skip(1)) {
+        Ok(path) => path,
+        Err(error) => {
+            eprintln!("{error}");
+            return;
+        }
+    };
     let mut game = game::Game::new();
+    game.load_settings(path);
 
     loop {
         let dt = get_frame_time().min(1.0 / 30.0);
@@ -33,15 +49,16 @@ async fn main() {
 
         // Integer scaling when possible keeps pixels crisp; letterbox the rest.
         clear_background(BLACK);
-        let fit = (screen_width() / gfx::W as f32).min(screen_height() / gfx::H as f32);
-        let s = if fit >= 1.0 { fit.floor() } else { fit };
-        let (w, h) = (gfx::W as f32 * s, gfx::H as f32 * s);
+        let view = gfx::Viewport::new(screen_width(), screen_height());
         draw_texture_ex(
             &tex,
-            ((screen_width() - w) / 2.0).floor(),
-            ((screen_height() - h) / 2.0).floor(),
+            view.x,
+            view.y,
             WHITE,
-            DrawTextureParams { dest_size: Some(vec2(w, h)), ..Default::default() },
+            DrawTextureParams {
+                dest_size: Some(vec2(view.width, view.height)),
+                ..Default::default()
+            },
         );
         next_frame().await;
     }

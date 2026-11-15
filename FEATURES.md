@@ -6,11 +6,11 @@ Status legend: [x] in prototype · [~] partial/simplified · [ ] not yet
 
 ## Core gameplay
 - [x] Turn-based artillery: set angle + power, fire, hit the other tanks
-- [x] 2–10 players on one screen (prototype: 2–8), hot-seat
+- [x] 2–10 players on one screen, hot-seat
 - [x] Human or computer-controlled players
 - [x] Multiple rounds; last tank standing wins the round
-- [~] Scoring (prototype: kills and round wins only; original has money-based scores)
-- [ ] Scoring modes: Basic / Standard / Greedy
+- [x] Money-based scoring for damage, kills and survival; cash standings
+- [x] Scoring modes: Basic / Standard / Greedy
 - [ ] Teams: None / Standard / Corporate (shared bank) / Vicious
 - [ ] Play order: Random, Losers-first, Winners-first, Round-robin
 - [ ] Play modes: Sequential ([x] done), Synchronous, Simultaneous
@@ -20,16 +20,16 @@ Status legend: [x] in prototype · [~] partial/simplified · [ ] not yet
 ## Physics & environment
 - [x] Gravity, ballistic trajectories
 - [x] Wind (random per round)
-- [ ] Changing wind (changes between turns), max wind setting
-- [ ] Adjustable gravity and air viscosity
-- [ ] Suspend Dirt, Tanks Fall, Borders Extend options
-- [ ] Tunneling: shots burrow into dirt before exploding (on by default)
+- [x] Changing wind (changes between turns), max wind setting
+- [x] Adjustable gravity and air viscosity
+- [x] Suspend Dirt, Tanks Fall, Borders Extend options
+- [x] Tunneling: shots burrow into dirt before exploding (on by default; thin layers can be crossed)
 - [x] Destructible pixel terrain
 - [x] Falling dirt after explosions
-- [x] Tanks fall when ground is removed, taking fall damage
+- [x] Tanks fall when ground is removed; 2 damage per pixel, on landing or during descent
 - [ ] Parachutes (prevent fall damage)
 - [ ] Wall types: None, Concrete, Rubber, Spring, Wrap-around, Padded, Random, Erratic
-      (prototype: none, shots leave the screen)
+      (prototype: none, shots are tracked within the Borders Extend margin)
 - [~] Sky types: Plain, Stormy, Stars, Shaded, Sunset, Cavern, Black, Random (prototype: 4 gradient skies)
 - [~] Random terrain shapes and colors (prototype: midpoint-displacement mountains, 4 palettes)
 - [ ] Hostile environment (lightning from Stormy skies)
@@ -59,18 +59,18 @@ Status legend: [x] in prototype · [~] partial/simplified · [ ] not yet
 - [ ] Auto Defense
 
 ## Economy
-- [ ] Money earned for damage/kills, lost for self-damage
-- [ ] Shop between rounds (buy weapons/accessories, sell back)
-- [ ] Interest rate, starting cash settings
+- [x] Money earned for damage/kills/survival, lost for self/team damage and kills
+- [~] Opening purchases with Cash at Start; inter-round shop, accessories and selling are pending
+- [x] Interest rate, starting cash and Computers Buy settings; exact integer cash/interest
 - [ ] Free market (prices move with demand)
 - [ ] Arms level (limits which weapons are available)
-- [~] Inventory (prototype: fixed starting ammo refilled every round)
+- [x] Persistent inventory: starter ammo once per game, 99-item limit, unlimited Baby Missiles
 
 ## Computer players
 - [x] Moron, [~] Shooter, [~] Spoiler (wind-aware prototype aiming; original AI algorithms are batch 16)
 - [ ] Poolshark (banks off walls), Tosser (corrects aim), Chooser (picks best method), Cyborg (smart targeting)
 - [ ] Unknown (random personality)
-- [ ] AI buying in shop, using shields/parachutes
+- [~] Bounded AI opening purchases; full buying personalities and shield/parachute use are pending
 
 ## Presentation
 - [x] Low-res 640×480 framebuffer, chunky VGA look, 8×16 DOS-style font
@@ -80,8 +80,8 @@ Status legend: [x] in prototype · [~] partial/simplified · [ ] not yet
 - [x] "Talking tanks" speech bubbles (own phrases, not the original's)
 - [ ] Tank death animations (several different kinds in original)
 - [ ] PC-speaker-style sound effects
-- [ ] Original menus: Sound, Hardware, Economics, Physics, Landscape, Play Options, Weapons, Save Changes
-- [ ] Mouse control
+- [x] Original menu layout, all seven option dialogs, Save Changes and TOML config (pending gameplay options are greyed out)
+- [~] Mouse control (menus and controller setup; battlefield controls are pending)
 - [ ] Save/restore game (System Menu), Mass Kill, Retreat
 - [ ] Tank Control Panel, Inventory Panel, Status Bar
 - [ ] Configurable keys (6 per player in Simultaneous mode)

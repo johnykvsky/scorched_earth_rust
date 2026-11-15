@@ -104,9 +104,13 @@ own copy instead.
 
 ### Where things live today
 
-`game.rs` (weapon table `WEAPONS`, projectile kinds `PKind`, `impact()`,
-`apply_explosion()`, turn flow, HUD, menu) · `terrain.rs` (pixels, `carve`,
-`add_dirt`, `settle_step`) · `ai.rs` (`plan()`, `sim()`) · `gfx.rs` (drawing).
+`game.rs` (round/turn flow, world state) · `settings.rs` (session options) ·
+`physics.rs` (shared ballistics, wind and settling rules) ·
+`economy.rs` (cash, interest, awards and ranking) · `shop.rs` (opening purchases) ·
+`weapons.rs` (`ITEMS` catalogue, projectiles, impacts, damage law) · `tank.rs`
+(tanks and controllers) · `inventory.rs` (bounded persistent stock) · `ui.rs`
+(menu input, HUD, dialogs, drawing) · `terrain.rs` (pixels, `carve`, `add_dirt`,
+`settle_step`) · `ai.rs` (`plan()`, `sim()`) · `gfx.rs` (drawing primitives).
 
 ---
 
@@ -162,16 +166,35 @@ Side-by-side interactive comparison in DOSBox remains a manual check.
 
 Groundwork so later batches only add data, not rewrites.
 
-- [ ] A `Settings` struct owned by `Game`, holding every option from the
+- [x] A `Settings` struct owned by `Game`, holding every option from the
       original's menus (see batch 2). Move the menu's current values into it.
-- [ ] Split `game.rs` before it grows further: `weapons.rs` (table plus
+- [x] Split `game.rs` before it grows further: `weapons.rs` (table plus
       behaviour), `ui.rs` (menus, HUD, dialogs), `tank.rs`.
-- [ ] Generalise `WEAPONS` into an `Item` table matching the manual's tables
+- [x] Generalise `WEAPONS` into an `Item` table matching the manual's tables
       *(pp. 23, 28)*: name, kind, **cost, bundle size, blast radius, arms
       level**, category (Weapon / Miscellaneous). Copy the numbers from the
       tables in batches 9–15.
-- [ ] Inventory is kept between rounds. **Max 99 of any item**; Baby Missiles
+- [x] Inventory is kept between rounds. **Max 99 of any item**; Baby Missiles
       are unlimited (shown as 99) *(p. 18)*.
+
+**Implemented:** `settings.rs` owns all planned menu options (plus config-only
+fields); the current menu reads and changes `Game.settings`. Future options
+are stored with their documented defaults but take effect in their own batches.
+Batch 2 extends this foundation with 10-player setup, a 10-round default and
+settings persistence.
+
+`weapons.rs` holds the full 48-item catalogue and projectile behaviour;
+`ui.rs` holds menu input, HUD, dialogs and object drawing; `tank.rs` holds tank
+state and geometry. `inventory.rs` enforces stock limits. Catalogue rows generate
+the item IDs and inventory size, preserving original weapon indices for damage.
+Unimplemented items are catalogued but cannot be selected or fired yet.
+Funky Bomb's opening radius is corrected to 20 from the researched rules;
+its remaining fidelity work stays in batch 9.
+
+The prototype starter stock is granted once per new game, never refilled at
+round boundaries. Shop purchases and accessory use remain in later batches.
+Regression tests verify round carry-over/new-game reset, stock limits,
+selection/fire guards, and catalogue prices/bundles/arms against `MECHANICS.md`.
 
 **Done when:** the game plays as before, and a new weapon is one table row plus
 one `match` arm.
@@ -184,24 +207,46 @@ The original main menu *(p. 38)*: `Start`, `Players: 2` (2–10),
 `Economics...`, `Physics...`, `Landscape...`, `Play Options...`, `Weapons...`,
 and `Save Changes`.
 
-- [ ] Same layout: a grey column of buttons on the left and the title picture
+- [x] Same layout: a grey column of buttons on the left and the title picture
       on the right. Each button has a **hotkey** letter, highlighted (Start = S,
       Physics = Y, Play Options = T, and so on).
-- [ ] Sub-menus pop up as small grey dialogs. **Counter/cycle** items:
+- [x] Sub-menus pop up as small grey dialogs. **Counter/cycle** items:
       hotkey = next, **Alt+hotkey** = previous. **Toggles** show a check box.
       Esc or a click outside closes the dialog *(p. 37)*.
-- [ ] Raise the player limit to **10** (needs 2 more player colours).
-- [ ] `Save Changes` writes the settings (ours: `~/.config/scorched/settings.toml`,
+- [x] Raise the player limit to **10** (needs 2 more player colours).
+- [x] `Save Changes` writes the settings (ours: `~/.config/scorched/settings.toml`,
       using crates `serde`, `toml`, `dirs`). Changes not saved last only for
       this session, as in the original.
-- [ ] Optional, as in the original: start with a different config file,
+- [x] Optional, as in the original: start with a different config file,
       `scorched myconfig.toml`.
-- [ ] Hardware menu: only **Firing Delay** (how fast shots are drawn, ✅ **Q26**
+- [x] Hardware menu: only **Firing Delay** (how fast shots are drawn, ✅ **Q26**
       0–500, default 100) and **Falling Delay** (how fast tanks fall, 0–1000,
       default 10) make sense for us *(p. 41)*. Skip graphics mode, BIOS
       keyboard and small memory.
 
 The options themselves are wired up in the batches below.
+
+**Implemented:** the main menu uses a left button column and an original title
+illustration on the right. All seven option dialogs are present; pending
+features are greyed out and cannot be edited. Start opens controller setup for
+up to 10 players; Done begins the game. The default is now 10 rounds, with a
+1–1000 range.
+
+Keyboard, left/right mouse clicks, Alt+hotkey, and Esc/outside-click dismissal
+are supported. Mouse coordinates follow the framebuffer scale/letterboxing.
+Hardware delays are active: Firing Delay changes animation speed while keeping
+fixed physics steps; Falling Delay is milliseconds per falling-tank pixel,
+with zero completing the fall without a drawing delay.
+
+Startup reads the default or supplied TOML file. Missing files use defaults;
+partial files inherit defaults, while invalid files produce a visible error.
+Only Save Changes writes the selected file, including any custom config path.
+Settings are validated before loading/saving and writes replace the file via a
+temporary file. Session edits remain unsaved until explicitly saved.
+
+Tests cover menu input and dismissal, disabled controls, all dialog layouts,
+10-player placement, hardware timing, config persistence/validation, and custom
+paths. Main menu and dialog framebuffer previews were visually checked.
 
 **Done when:** every menu from the original exists. Unimplemented options are
 greyed out.
@@ -211,24 +256,53 @@ greyed out.
 
 All from the Physics menu *(pp. 44–45)*, confirmed in DOSBox:
 
-- [ ] **Air Viscosity** 0–20, default 0: drag that slows projectiles.
-- [ ] **Gravity** 0.05–10, default 0.2. Map 0.2 to our current `G`. ✅ **Q4**
-- [ ] **Suspend Dirt** 0–100 %, default 0: the per-shot **chance that floating
+- [x] **Air Viscosity** 0–20, default 0: drag that slows projectiles.
+- [x] **Gravity** 0.05–10, default 0.2. Uses acceleration `2500 × Gravity` (0.2 → 500), per Q4. ✅ **Q4**
+- [x] **Suspend Dirt** 0–100 %, default 0: the per-shot **chance that floating
       dirt stays in the air** (Q3, disassembled; the manual's wording is
       backwards). At 0, dirt always falls.
-- [ ] **Tanks Fall** on/off, default on.
-- [ ] **Borders Extend** 0–10000, default 75: how many pixels off-screen a shot
+- [x] **Tanks Fall** on/off, default on.
+- [x] **Borders Extend** 0–10000, default 75: how many pixels off-screen a shot
       is tracked before it counts as a miss, so wind can bring it back. Ours
       currently drops the shot at the edge.
-- [ ] **Impact Damage** (config-file only, *p. 50*): fall damage when the tank ✅ **Q2**
+- [x] **Impact Damage** (config-file only, *p. 50*): fall damage when the tank ✅ **Q2**
       lands (on) or while it falls (off). Same total either way.
-- [ ] Wind (from the Landscape menu, *p. 46*): **Max. Wind** 0–500, default 200 ✅ **Q4**
+- [x] Wind (from the Landscape menu, *p. 46*): **Max. Wind** 0–500, default 200 ✅ **Q4**
       (rescale ours, which is ±10), and **Changing Wind**, default off: wind
       changes by −5…+5 each turn (Q4). Round-start wind:
       `random(Max/2) − Max/4`, sometimes doubled (Q4).
-- [ ] `ai::sim()` uses the same physics (pass a `Physics` struct). Note: the
+- [x] `ai::sim()` uses the same physics (pass a `Physics` struct). Note: the
       manual says some AIs and Ballistic Guidance **can't handle viscosity**.
       Keep that weakness.
+
+**Implemented:** `physics.rs` provides the fixed step shared by live projectiles
+and AI prediction: power is launch speed directly, speed is capped at 1000,
+and integration follows move → drag → gravity → wind. The confirmed Q4 units
+replace the prototype's `G=200`, `POWER_K=0.45`, and `WIND_K=4`.
+
+The five Physics controls and Landscape's Max. Wind / Changing Wind controls
+are active. Gravity cycles in 0.05 steps; other numeric controls use unit steps
+(PgUp/PgDn = ten steps). Walls remain disabled until batch 4. Impact Damage
+is a TOML-only `physics.impact_damage` setting.
+
+Suspend Dirt is rolled once for each fired shot, including all child warheads
+and death blasts. Dirt settling waits for projectiles and explosions to finish;
+a later collapsing shot can settle dirt left suspended by earlier shots.
+Tanks Fall off leaves tanks floating. Fewer than three ground pixels triggers
+a fall; damage is two per fallen pixel, applied during descent or on landing,
+with the same total in either mode.
+
+Round-start wind uses the recovered conditional doubling formula. Changing
+Wind applies a clamped −5…+5 step between turns, retaining the initial wind
+for the first shot. Borders Extend applies to lateral exits; high arcs can
+travel above the screen. The former 30-second projectile timeout is extended
+to 120 seconds so large margins remain useful.
+
+AI simulations use the same projectile step and border rules. Shooter/Spoiler
+intentionally ignore drag; the prototype Shooter also retains its existing
+wind blindness until batch 16. Tests cover physical units and trajectories,
+off-screen return, settling probabilities and shot lifetime, fall modes,
+wind rules, enabled menus, and AI predictions.
 
 **Done when:** every option visibly changes the game, and the AI still copes
 with gravity and wind changes.
@@ -262,15 +336,37 @@ None → Wrap-around → Padded → Rubber → Spring → Concrete → Random �
 A Weapons-menu option, **on by default** *(p. 49)*. The original's projectiles
 don't explode the moment they touch dirt; they burrow in first.
 
-- [ ] Tunneling on: a projectile hitting dirt keeps going through it, slowing
+- [x] Tunneling on: a projectile hitting dirt keeps going through it, slowing
       down, then explodes. With a thin enough pile it can **come out the other
       side** at lower speed. ✅ **Q5**. Rule from the binary: for **each dirt
       pixel** the shot enters, multiply its velocity by **0.75** and erase that
       pixel; once speed² < **2000**, it explodes there. No gravity or wind while
       inside dirt. Rollers, tracers and Dirt Charge never tunnel.
-- [ ] Tunneling off: explode on contact (our current behaviour).
-- [ ] This is what makes Contact Triggers useful (batch 14) and why Napalm can
+- [x] Tunneling off: explode on contact.
+- [x] This is what makes Contact Triggers useful (batch 14) and why Napalm can
       "fizzle" inside dirt (batch 11).
+
+**Implemented:** the Weapons menu's Tunneling checkbox is active and defaults
+to on. Each projectile snapshots the setting when fired, and child warheads
+inherit it. Pre-apex MIRVs retain batch 0's dud behavior on contact.
+
+The shared projectile step walks crossed grid cells in order, including fast,
+negative and diagonal movement. Each newly entered dirt pixel is erased and
+multiplies velocity by 0.75; crossing an already erased pixel does not charge
+again. The shot detonates when speed² is strictly below 2000. Gravity, wind
+and drag affect only time spent in air and resume after leaving the dirt.
+Erased pixels mark their columns for the existing post-shot settling rules.
+Roller variants, tracer variants and Dirt Charge are excluded from tunneling;
+their remaining weapon implementations stay in their own batches.
+
+AI prediction uses this same step with a private terrain-erasure overlay for
+each candidate shot, leaving the live battlefield unchanged. Tests cover thin
+layers, buried explosions, strict cutoff, per-pixel slowing, forces, exceptions,
+child settings, menu/config behavior and isolated AI predictions. A framebuffer
+preview checks an explosion centered below the hillside surface.
+
+The per-shot flag provides the override for Contact Triggers in batch 14;
+Napalm's underground fizzle behavior remains part of batch 11.
 
 **Done when:** shots into a hillside visibly explode inside it.
 
@@ -279,21 +375,59 @@ don't explode the moment they touch dirt; they burrow in first.
 
 Economics menu *(pp. 42–43)*:
 
-- [ ] **Interest Rate** 0–0.30, default 0.05, earned on money left in the bank ✅ **Q8**
+- [x] **Interest Rate** 0–0.30, default 0.05, earned on money left in the bank ✅ **Q8**
       at the start of a round.
-- [ ] **Cash at Start** $0–$1,000,000, default $0. If above 0, everyone shops
+- [x] **Cash at Start** $0–$1,000,000, default $0. If above 0, everyone shops
       before round 1.
-- [ ] **Computers Buy** on/off, default on.
-- [ ] **Scoring Mode** — **Basic / Standard / Greedy** (default Standard).
+- [x] **Computers Buy** on/off, default on.
+- [x] **Scoring Mode** — **Basic / Standard / Greedy** (default Standard).
       My earlier list said "Corporate/Vicious": those are *team* modes, batch 17.
   - Basic: points only for kills and for surviving the round.
   - Standard: fewer points per kill, plus points every time you damage a ✅ **Q6**
         tank or shield.
   - Greedy: like Standard, but final rankings use **net worth** (cash plus 🟡 **Q7**
         the depreciated value of your inventory).
-- [ ] Points are money: you **lose** money for damaging or killing yourself
+- [x] Points are money: you **lose** money for damaging or killing yourself
       or teammates *(pp. 31, 52)*. ✅ **Q6**
-- [ ] Round-over screen ranks players, with cash shown.
+- [x] Round-over screen ranks players, with cash shown.
+
+**Implemented:** the Economics menu enables Interest Rate, Cash at Start,
+Computers Buy and Basic/Standard/Greedy scoring. Interest changes by 0.01 and
+starting cash by $1,000 per menu step; TOML can specify intermediate values.
+Free Market remains disabled until batch 7.
+
+`economy.rs` uses exact arbitrary-size unsigned integer cash, including integer
+interest at `trunc(rate × 10000)` basis points and an interest-earned total.
+Each round pays interest once, at its start. New games reset accounts; cash
+and inventory persist between rounds. Penalties clamp cash at zero.
+
+Direct hits, blasts and falls award money for actual health removed, capped by
+the victim's remaining health, so overkill and secondary explosions cannot
+award the same health twice. Enemy kills pay 4000 in Basic or 500 otherwise;
+self kills cost 1500, teammate kills 2000. Basic has no per-damage awards;
+Standard/Greedy use +30 per enemy health point and −15 for self/team damage.
+The scoring helper also supports +2 per enemy shield point for batch 13.
+Team assignment/gameplay remains batch 17; its penalty relationship is ready.
+Survival pools (players × 1000 or 5000) split with integer truncation and pay
+once; all-dead rounds pay nothing.
+
+Round-over and final standings rank by cash, or by cash plus 80%-valued held
+inventory in Greedy, with cash always shown. Valuation uses current bundle
+prices and rounds once per item type, matching the sell-back formula. The
+always-held 99 Baby Missiles use the same catalogue valuation for every player.
+Large balances display compactly; comparisons retain their full exact value.
+
+Positive starting cash opens a basic purchase screen before round 1. Humans
+can buy affordable complete bundles of the nine implemented weapons (excluding
+unlimited Baby Missiles); computers make bounded starter purchases only when
+Computers Buy is on. Interest on round 1 is paid on cash remaining after these
+purchases. Inter-round shopping, selling, partial bundles, accessories and the
+full shop controls remain batch 7/8; computer buying personalities remain 16.
+
+Tests exercise ten full scoring rounds per mode, 1000-round interest growth,
+penalties, fall timing, kill/pool payment guards, Greedy ranking, current prices,
+opening purchase flow, menu input and settings persistence. Ten-player standings
+and opening-purchase previews were visually checked.
 
 **Done when:** money changes sensibly over a 10-round game in each mode.
 

@@ -4,17 +4,17 @@ use crate::gfx::{Fb, Rgb, H, W};
 use macroquad::rand::gen_range;
 
 const SKIES: [(Rgb, Rgb); 4] = [
-    (Rgb(0, 0, 40), Rgb(110, 40, 150)),    // dusk
-    (Rgb(0, 0, 0), Rgb(0, 0, 140)),        // night
+    (Rgb(0, 0, 40), Rgb(110, 40, 150)),     // dusk
+    (Rgb(0, 0, 0), Rgb(0, 0, 140)),         // night
     (Rgb(30, 60, 190), Rgb(170, 200, 255)), // day
-    (Rgb(60, 0, 20), Rgb(255, 150, 40)),   // sunset
+    (Rgb(60, 0, 20), Rgb(255, 150, 40)),    // sunset
 ];
 
 const DIRTS: [(Rgb, Rgb); 4] = [
-    (Rgb(190, 150, 70), Rgb(80, 45, 15)),  // sand / earth
-    (Rgb(70, 190, 70), Rgb(15, 60, 15)),   // grass
+    (Rgb(190, 150, 70), Rgb(80, 45, 15)),   // sand / earth
+    (Rgb(70, 190, 70), Rgb(15, 60, 15)),    // grass
     (Rgb(210, 210, 225), Rgb(80, 80, 110)), // snow
-    (Rgb(210, 90, 40), Rgb(90, 25, 10)),   // mars
+    (Rgb(210, 90, 40), Rgb(90, 25, 10)),    // mars
 ];
 
 pub struct Terrain {
@@ -22,6 +22,41 @@ pub struct Terrain {
     dirty: Vec<bool>,
     sky: Vec<Rgb>,
     dirt: Vec<Rgb>,
+}
+
+/// Live terrain and an AI's private erasure overlay share the same projectile code.
+pub(crate) trait TerrainAccess {
+    fn solid(&self, x: i32, y: i32) -> bool;
+    fn erase(&mut self, x: i32, y: i32);
+}
+
+pub(crate) struct PredictionTerrain<'a> {
+    original: &'a Terrain,
+    erased: Vec<(i32, i32)>,
+}
+
+impl<'a> PredictionTerrain<'a> {
+    pub fn new(original: &'a Terrain) -> Self {
+        Self { original, erased: Vec::new() }
+    }
+}
+
+impl TerrainAccess for PredictionTerrain<'_> {
+    fn solid(&self, x: i32, y: i32) -> bool {
+        self.original.solid(x, y) && !self.erased.contains(&(x, y))
+    }
+    fn erase(&mut self, x: i32, y: i32) {
+        self.erased.push((x, y));
+    }
+}
+
+impl TerrainAccess for Terrain {
+    fn solid(&self, x: i32, y: i32) -> bool {
+        Terrain::solid(self, x, y)
+    }
+    fn erase(&mut self, x: i32, y: i32) {
+        self.set(x, y, false);
+    }
 }
 
 /// Per-row gradient quantised to `n` bands, like a 256-colour VGA palette.
@@ -73,6 +108,16 @@ impl Terrain {
             dirty: vec![false; W as usize],
             sky: bands(sa, sb, 16, 0, H),
             dirt: bands(da, db, 12, 110, H),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn flat(top: i32) -> Self {
+        Self {
+            solid: (0..W * H).map(|i| i / W >= top).collect(),
+            dirty: vec![false; W as usize],
+            sky: vec![Rgb(0, 0, 80); H as usize],
+            dirt: vec![Rgb(120, 80, 30); H as usize],
         }
     }
 

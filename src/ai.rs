@@ -1,12 +1,14 @@
 //! Computer players: brute-force simulate shots, pick the closest, add noise.
 
-use crate::game::{Tank, WKind, G, POWER_K, WEAPONS, WIND_K};
-use crate::gfx::{H, W};
-use crate::terrain::Terrain;
-use macroquad::prelude::{vec2, Vec2};
+use crate::physics::{Physics, MAX_FLIGHT_TIME, SIM_DT};
+use crate::tank::Tank;
+use crate::terrain::{PredictionTerrain, Terrain};
+use crate::weapons::{self, ItemId, ItemKind, PKind, Proj, Step, WKind, ITEMS};
+use macroquad::prelude::Vec2;
 use macroquad::rand::gen_range;
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum AiKind {
     Moron,
     Shooter,
@@ -16,38 +18,70 @@ pub enum AiKind {
 pub struct Plan {
     pub angle: i32,
     pub power: i32,
-    pub weapon: usize,
+    pub weapon: ItemId,
 }
 
 /// Where a shot would land (simplified: no MIRV split, no rolling).
-fn sim(terrain: &Terrain, tanks: &[Tank], me: usize, angle: i32, power: i32, wind: f32) -> Vec2 {
-    let (mut pos, dir) = tanks[me].muzzle(angle);
-    let mut vel = dir * power as f32 * POWER_K;
-    let dt = 1.0 / 200.0;
-    for _ in 0..4000 {
-        vel.y += G * dt;
-        vel.x += wind * WIND_K * dt;
-        pos += vel * dt;
-        let (x, y) = (pos.x.floor() as i32, pos.y.floor() as i32);
-        if x < 0 || x >= W {
-            return pos;
-        }
-        if y >= H {
-            return vec2(pos.x, (H - 1) as f32);
-        }
-        if y >= 0 {
-            if terrain.solid(x, y) {
-                return pos;
-            }
-            if tanks.iter().enumerate().any(|(i, t)| i != me && t.alive && t.hit(x, y)) {
-                return pos;
-            }
+fn sim(
+    terrain: &Terrain,
+    tanks: &[Tank],
+    me: usize,
+    angle: i32,
+    power: i32,
+    physics: &Physics,
+    tunneling: bool,
+) -> Vec2 {
+    let (pos, dir) = tanks[me].muzzle(angle);
+    let mut shot = Proj {
+        pos,
+        vel: dir * power as f32,
+        owner: me,
+        weapon: ItemId::BabyMissile,
+        kind: PKind::Shell,
+        radius: 10.0,
+        damage: ItemId::BabyMissile.item().damage(),
+        age: 0.0,
+        tunneling,
+        in_dirt: false,
+    };
+    let mut trail = Vec::with_capacity(1);
+    let mut predicted_terrain = PredictionTerrain::new(terrain);
+    for _ in 0..=(MAX_FLIGHT_TIME / SIM_DT) as usize {
+        match weapons::step_proj(
+            &mut shot,
+            SIM_DT,
+            &mut predicted_terrain,
+            tanks,
+            physics,
+            &mut trail,
+        ) {
+            Step::Alive => trail.clear(),
+            Step::Hit(pos, _) => return pos,
+            Step::Gone | Step::Split => break,
         }
     }
-    pos
+    shot.pos
 }
 
-pub fn plan(kind: AiKind, terrain: &Terrain, tanks: &[Tank], me: usize, wind: i32) -> Plan {
+fn aiming_physics(kind: AiKind, physics: &Physics) -> Physics {
+    let mut predicted = *physics;
+    if kind != AiKind::Spoiler {
+        predicted.wind = 0.0;
+    }
+    if matches!(kind, AiKind::Shooter | AiKind::Spoiler) {
+        predicted.air_viscosity = 0;
+    }
+    predicted
+}
+
+pub fn plan(
+    kind: AiKind,
+    terrain: &Terrain,
+    tanks: &[Tank],
+    me: usize,
+    physics: &Physics,
+    tunneling: bool,
+) -> Plan {
     let t = &tanks[me];
     let enemies: Vec<usize> = (0..tanks.len()).filter(|&i| i != me && tanks[i].alive).collect();
     let target = match kind {
@@ -57,16 +91,16 @@ pub fn plan(kind: AiKind, terrain: &Terrain, tanks: &[Tank], me: usize, wind: i3
     let goal = tanks[target].center();
     let home = t.center();
 
-    // (samples, considers wind, angle noise, power noise)
-    let (samples, sees_wind, a_noise, p_noise) = match kind {
-        AiKind::Moron => (30, false, 12, 120),
-        AiKind::Shooter => (250, false, 2, 20),
-        AiKind::Spoiler => (500, true, 0, 5),
+    // (samples, angle noise, power noise); original aiming algorithms arrive in batch 16.
+    let (samples, a_noise, p_noise) = match kind {
+        AiKind::Moron => (30, 12, 120),
+        AiKind::Shooter => (250, 2, 20),
+        AiKind::Spoiler => (500, 0, 5),
     };
-    let wind = if sees_wind { wind as f32 } else { 0.0 };
+    let predicted = aiming_physics(kind, physics);
     let maxp = t.max_power().max(1);
     let score = |a: i32, p: i32| {
-        let hit = sim(terrain, tanks, me, a, p, wind);
+        let hit = sim(terrain, tanks, me, a, p, &predicted, tunneling);
         let mut s = hit.distance(goal);
         if hit.distance(home) < 40.0 {
             s += 1000.0;
@@ -96,19 +130,122 @@ pub fn plan(kind: AiKind, terrain: &Terrain, tanks: &[Tank], me: usize, wind: i3
 
     // Sometimes use something heavier, but not if it would hit ourselves.
     let dist = goal.distance(home);
-    let options: Vec<usize> = (1..WEAPONS.len())
-        .filter(|&i| {
-            let w = &WEAPONS[i];
-            t.ammo[i] > 0
-                && matches!(w.kind, WKind::Blast | WKind::Mirv | WKind::Funky | WKind::Roller)
-                && w.radius + 25.0 < dist
+    let options: Vec<ItemId> = ITEMS
+        .iter()
+        .filter(|item| {
+            item.id != ItemId::BabyMissile
+                && t.inventory.can_select(item.id)
+                && matches!(
+                    item.kind,
+                    ItemKind::Weapon(WKind::Blast | WKind::Mirv | WKind::Funky | WKind::Roller)
+                )
+                && item.radius + 25.0 < dist
         })
+        .map(|item| item.id)
         .collect();
     let weapon = if !options.is_empty() && gen_range(0.0f32, 1.0) < 0.5 {
         options[gen_range(0, options.len())]
     } else {
-        0
+        ItemId::BabyMissile
     };
 
     Plan { angle, power, weapon }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{gfx::Rgb, inventory::Inventory, settings::PhysicsSettings, tank::Ctrl};
+
+    fn tanks() -> Vec<Tank> {
+        [100, 600]
+            .into_iter()
+            .map(|x| Tank {
+                name: "Test".into(),
+                color: Rgb::WHITE,
+                ctrl: Ctrl::Human,
+                account: crate::economy::Account::default(),
+                team: None,
+                x,
+                y: 400,
+                angle: 60,
+                power: 400,
+                health: 100,
+                alive: true,
+                inventory: Inventory::default(),
+                weapon: ItemId::BabyMissile,
+                fall: 0,
+                last_hit: None,
+                kills: 0,
+                wins: 0,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn predicted_shots_follow_gravity_and_wind_in_original_units() {
+        let terrain = Terrain::flat(450);
+        let tanks = tanks();
+        for gravity in [0.2, 0.4] {
+            for wind in [-40, 40] {
+                let mut settings = PhysicsSettings::default();
+                settings.gravity = gravity;
+                let physics = Physics::new(&settings, wind);
+                let hit = sim(&terrain, &tanks, 0, 60, 400, &physics, false);
+                let (start, dir) = tanks[0].muzzle(60);
+                let velocity = dir * 400.0;
+                let time = (-velocity.y
+                    + (velocity.y * velocity.y + 2.0 * physics.gravity * (450.0 - start.y)).sqrt())
+                    / physics.gravity;
+                let expected = start.x + velocity.x * time + 0.5 * physics.wind * time * time;
+                assert!(
+                    (hit.x - expected).abs() < 1.0,
+                    "gravity={gravity} wind={wind}: {} vs {expected}",
+                    hit.x
+                );
+                assert!(hit.y >= 450.0 && hit.y < 452.0);
+            }
+        }
+    }
+
+    #[test]
+    fn tunneling_predictions_are_repeatable_and_never_erase_live_terrain() {
+        let terrain = Terrain::flat(350);
+        let tanks = tanks();
+        let physics = Physics::new(&PhysicsSettings::default(), 0);
+        let surface_hit = sim(&terrain, &tanks, 0, 60, 1000, &physics, false);
+        let buried_hit = sim(&terrain, &tanks, 0, 60, 1000, &physics, true);
+        let repeat = sim(&terrain, &tanks, 0, 60, 1000, &physics, true);
+        assert!(buried_hit.x > surface_hit.x + 3.0);
+        assert_eq!(buried_hit, repeat);
+        assert!(terrain.solid(surface_hit.x.floor() as i32, surface_hit.y.floor() as i32));
+        assert!(terrain.solid(buried_hit.x.floor() as i32, buried_hit.y.floor() as i32));
+    }
+
+    #[test]
+    fn smart_ai_keeps_its_drag_weakness_while_spoiler_accounts_for_wind() {
+        let terrain = Terrain::flat(450);
+        let tanks = tanks();
+        let mut settings = PhysicsSettings::default();
+        settings.air_viscosity = 20;
+        let actual = Physics::new(&settings, 40);
+        let spoiler = aiming_physics(AiKind::Spoiler, &actual);
+        let shooter = aiming_physics(AiKind::Shooter, &actual);
+        assert_eq!(spoiler.wind, actual.wind);
+        assert_eq!(spoiler.gravity, actual.gravity);
+        assert_eq!(spoiler.air_viscosity, 0);
+        assert_eq!(shooter.wind, 0.0);
+        assert_eq!(shooter.air_viscosity, 0);
+        assert_eq!(aiming_physics(AiKind::Moron, &actual).air_viscosity, 20);
+        assert!(
+            sim(&terrain, &tanks, 0, 60, 400, &spoiler, false).x
+                - sim(&terrain, &tanks, 0, 60, 400, &actual, false).x
+                > 50.0
+        );
+        // A real plan remains usable with changed physics and exhausted heavy ammunition.
+        let plan = plan(AiKind::Spoiler, &terrain, &tanks, 0, &actual, true);
+        assert!((0..=180).contains(&plan.angle));
+        assert!((0..=tanks[0].max_power()).contains(&plan.power));
+        assert!(tanks[0].inventory.can_select(plan.weapon));
+    }
 }

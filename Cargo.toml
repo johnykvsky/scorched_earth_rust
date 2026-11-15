@@ -6,6 +6,9 @@ edition = "2021"
 [dependencies]
 macroquad = "0.4"
 font8x8 = "0.3"
+serde = { version = "1", features = ["derive"] }
+toml = "1"
+dirs = "7"
 
 # Keep debug builds fast enough to play (pixel loops are hot).
 [profile.dev]
