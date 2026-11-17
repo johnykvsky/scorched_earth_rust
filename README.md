@@ -85,6 +85,30 @@ show the cash standings. The first
 player each round is random; subsequent turns follow tank positions from left
 to right, wrapping at the edge.
 
+The **Start → Player Setup** screen has two checkboxes, both off on launch:
+
+- **Simplified weapons** (`S`): every player starts with unlimited Baby Missiles
+  (shown as 99), 10 Missiles, 4 Rollers, 20 Tracers and 4 Dirt Balls. No other
+  weapons or accessories are granted. There is no shopping before or between
+  rounds, even with positive Cash at Start. Damage, kills, survival and Mass Kill
+  award no money; interest and market changes are disabled. Standings count
+  victories and show rounds played. Teams share victories under the ordinary
+  team rules; Winners First/Losers First uses victories. Unused ammunition
+  carries between rounds without refills. Simplified matches do not enter the
+  money-based Hall of Fame or have a buying screen for Save Game.
+- **Use default settings** (`U`): use default Sound, Hardware, Economics, Physics,
+  Landscape, Play Options and Weapons values for this match. The selected
+  players, names, controllers, tank icons, team assignments, key bindings and
+  round count stay as chosen. Your configured options return when you leave the
+  match or finish final standings. Save Changes preserves your configured
+  options, including while a temporary-default match is active. A System Menu
+  New Game during the match keeps its temporary options. Uncheck this box to
+  start the next match with your configured options.
+
+The checkboxes can be combined and remain selected for the current application
+session until changed; they are not written to the settings file. Space/Enter
+or a mouse click toggles a selected checkbox; **Done** (`D`) starts the match.
+
 Starter ammunition is granted once per game. Unused stock carries between rounds;
 other items are capped at 99, and Baby Missiles stay unlimited (displayed as 99).
 The catalogue includes all original items, with twenty-eight weapons currently usable.

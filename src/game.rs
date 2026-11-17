@@ -70,6 +70,8 @@ enum ExitConfirmation {
 }
 
 pub struct Game {
+    configured_settings: Option<Settings>,
+    simplified_weapons: bool,
     exit_confirmation: Option<ExitConfirmation>,
     concurrent: crate::modes::Battle,
     system: Option<crate::system::System>,
@@ -134,6 +136,8 @@ pub struct Game {
 impl Game {
     pub fn new() -> Self {
         Game {
+            configured_settings: None,
+            simplified_weapons: false,
             exit_confirmation: None,
             concurrent: crate::modes::Battle::default(),
             system: None,
@@ -250,7 +254,12 @@ impl Game {
             .map(Ok)
             .unwrap_or_else(|| crate::settings::config_path(std::iter::empty()));
         self.menu.notice = Some(match result {
-            Ok(path) => match self.settings.save(&path) {
+            Ok(path) => match self
+                .configured_settings
+                .as_ref()
+                .unwrap_or(&self.settings)
+                .save(&path)
+            {
                 Ok(()) => format!("Settings saved to {}", path.display()),
                 Err(error) => {
                     eprintln!("{error}");
@@ -262,6 +271,11 @@ impl Game {
     }
 
     fn set_phase(&mut self, p: Phase) {
+        if p == Phase::Menu {
+            if let Some(settings) = self.configured_settings.take() {
+                self.settings = settings;
+            }
+        }
         self.phase = p;
         self.phase_t = 0.0;
     }
@@ -367,9 +381,15 @@ impl Game {
         if self.round_paid {
             return;
         }
-        let share = crate::play::mass_kill_share(&self.tanks, self.settings.economics.scoring);
-        for survivor in crate::play::alive(&self.tanks) {
-            economy::add_cash(&mut self.tanks, survivor, &share);
+        let share = if self.simplified_weapons {
+            economy::Money::default()
+        } else {
+            crate::play::mass_kill_share(&self.tanks, self.settings.economics.scoring)
+        };
+        if !self.simplified_weapons {
+            for survivor in crate::play::alive(&self.tanks) {
+                economy::add_cash(&mut self.tanks, survivor, &share);
+            }
         }
         for tank in &mut self.tanks {
             tank.alive = false;
@@ -388,7 +408,11 @@ impl Game {
         self.action_owner = None;
         self.ai_plan = None;
         self.finish_round(&[]);
-        self.round_msg = format!("Mass Kill: {} per survivor", economy::money_text(&share));
+        self.round_msg = if self.simplified_weapons {
+            "Mass Kill: nobody wins this round.".into()
+        } else {
+            format!("Mass Kill: {} per survivor", economy::money_text(&share))
+        };
     }
     fn stage_players(&mut self) {
         let mut settings = self.settings.clone();
@@ -656,7 +680,14 @@ impl Game {
                     return true;
                 }
                 Command::NewGame => {
-                    self.start_game();
+                    if self.phase == Phase::Menu {
+                        if let Err(error) = self.start_from_menu() {
+                            system.panel = Panel::Message(error);
+                            self.system = Some(system);
+                        }
+                    } else {
+                        self.start_game();
+                    }
                     return true;
                 }
                 Command::Quit => return false,
@@ -717,6 +748,9 @@ impl Game {
         game.hall_path = self.hall_path.clone();
         game.hall_notice = self.hall_notice.clone();
         game.settings = self.settings.clone();
+        game.configured_settings = self.configured_settings.clone();
+        game.menu.simplified_weapons = self.menu.simplified_weapons;
+        game.menu.use_default_settings = self.menu.use_default_settings;
         game.landscape_reverse = self.landscape_reverse;
         game.settings.players = saved.players.len();
         game.settings.rounds = saved.rounds;
@@ -975,10 +1009,11 @@ impl Game {
                 }
                 match action {
                     MenuAction::Quit => self.confirm_exit(ExitConfirmation::Quit),
-                    MenuAction::Start => match self.settings.validate() {
-                        Ok(()) => self.start_game(),
-                        Err(error) => self.menu.notice = Some(error),
-                    },
+                    MenuAction::Start => {
+                        if let Err(error) = self.start_from_menu() {
+                            self.menu.notice = Some(error);
+                        }
+                    }
                     MenuAction::Save => self.save_settings(),
                     MenuAction::HallOfFame => self.open_hall(),
                     MenuAction::Stay => {}
@@ -1058,6 +1093,35 @@ impl Game {
         true
     }
 
+    fn start_from_menu(&mut self) -> Result<(), String> {
+        let mut settings = self.settings.clone();
+        if self.menu.use_default_settings {
+            let defaults = Settings::default();
+            settings.sound = defaults.sound;
+            settings.hardware = defaults.hardware;
+            settings.economics = defaults.economics;
+            settings.physics = defaults.physics;
+            settings.landscape = defaults.landscape;
+            settings.play = defaults.play;
+            settings.weapons = defaults.weapons;
+        }
+        settings.validate()?;
+        if self.menu.use_default_settings {
+            self.configured_settings = Some(std::mem::replace(&mut self.settings, settings));
+        }
+        self.simplified_weapons = self.menu.simplified_weapons;
+        self.start_game();
+        Ok(())
+    }
+
+    fn award_damage(&mut self, event: DamageEvent) {
+        if self.simplified_weapons {
+            economy::record_damage(&mut self.tanks, None, event);
+        } else {
+            economy::award_damage(&mut self.tanks, self.settings.economics.scoring, event);
+        }
+    }
+
     fn start_game(&mut self) {
         self.system = None;
         self.edit_settings = None;
@@ -1083,7 +1147,11 @@ impl Game {
                     name,
                     color: PLAYER_COLORS[i],
                     ctrl,
-                    account: crate::economy::Account::new(self.settings.economics.cash_at_start),
+                    account: crate::economy::Account::new(if self.simplified_weapons {
+                        0
+                    } else {
+                        self.settings.economics.cash_at_start
+                    }),
                     team: None,
                     x: 0,
                     y: 0,
@@ -1091,7 +1159,11 @@ impl Game {
                     power: 400,
                     health: 100,
                     alive: true,
-                    inventory: Inventory::starter(),
+                    inventory: if self.simplified_weapons {
+                        Inventory::simplified()
+                    } else {
+                        Inventory::starter()
+                    },
                     equipment: crate::tank::Equipment::default(),
                     weapon: ItemId::BabyMissile,
                     fall: 0,
@@ -1134,7 +1206,7 @@ impl Game {
     }
 
     fn refresh_prices(&mut self) {
-        self.prices = if self.settings.economics.free_market {
+        self.prices = if self.settings.economics.free_market && !self.simplified_weapons {
             self.market.prices()
         } else {
             economy::base_prices()
@@ -1148,7 +1220,7 @@ impl Game {
     }
 
     fn save_market(&mut self) {
-        if self.settings.economics.free_market {
+        if self.settings.economics.free_market && !self.simplified_weapons {
             if let Some(path) = &self.market_path {
                 if let Err(error) = self.market.save(path) {
                     eprintln!("{error}");
@@ -1161,6 +1233,10 @@ impl Game {
     }
 
     fn begin_shop(&mut self) {
+        if self.simplified_weapons {
+            self.start_round();
+            return;
+        }
         self.refresh_prices();
         self.shop = Shop::default();
         self.set_phase(Phase::Shop);
@@ -1198,13 +1274,23 @@ impl Game {
         self.earth = earth::Effects::default();
         self.liquid = crate::liquid::Effects::default();
         self.energy = crate::energy::Effect::default();
-        crate::play::survival(
-            &mut self.tanks,
-            alive,
-            self.settings.play.teams,
-            self.settings.economics.scoring,
-            self.vicious_split,
-        );
+        if self.simplified_weapons {
+            crate::play::round_result(
+                &mut self.tanks,
+                alive,
+                self.settings.play.teams,
+                None,
+                self.vicious_split,
+            );
+        } else {
+            crate::play::survival(
+                &mut self.tanks,
+                alive,
+                self.settings.play.teams,
+                self.settings.economics.scoring,
+                self.vicious_split,
+            );
+        }
         self.round_msg = match alive.first() {
             Some(&winner) => {
                 if self.settings.play.teams != TeamMode::None
@@ -1221,13 +1307,13 @@ impl Game {
             }
             None => "Nobody survived!".into(),
         };
-        if self.settings.economics.free_market {
+        if self.settings.economics.free_market && !self.simplified_weapons {
             self.market
                 .advance(self.tanks.len(), self.settings.economics.interest_rate);
             self.refresh_prices();
             self.save_market();
         }
-        if self.round == self.settings.rounds {
+        if self.round == self.settings.rounds && !self.simplified_weapons {
             self.hall.record(
                 &self.tanks,
                 &self.prices,
@@ -1251,8 +1337,12 @@ impl Game {
         match self.phase {
             Phase::RoundOver => self.continue_after_round(),
             Phase::GameOver => {
+                let mode = self.settings.economics.scoring;
                 self.set_phase(Phase::Menu);
-                self.open_hall();
+                if !self.simplified_weapons {
+                    self.open_hall();
+                    self.hall_mode = mode;
+                }
             }
             _ => {}
         }
@@ -1292,7 +1382,9 @@ impl Game {
     fn start_round(&mut self) {
         self.concurrent.reset(self.tanks.len());
         if self.interest_round != self.round {
-            economy::interest(&mut self.tanks, self.settings.economics.interest_rate);
+            if !self.simplified_weapons {
+                economy::interest(&mut self.tanks, self.settings.economics.interest_rate);
+            }
             self.interest_round = self.round;
         }
         self.round_paid = false;
@@ -1396,6 +1488,20 @@ impl Game {
             self.settings.economics.scoring,
             &self.prices,
         );
+        if self.simplified_weapons {
+            use crate::settings::PlayOrder;
+            let order = self.settings.play.order;
+            if matches!(order, PlayOrder::WinnersFirst | PlayOrder::LosersFirst) {
+                self.turn_order.active.sort_by(|&a, &b| {
+                    let comparison = if order == PlayOrder::WinnersFirst {
+                        self.tanks[b].wins.cmp(&self.tanks[a].wins)
+                    } else {
+                        self.tanks[a].wins.cmp(&self.tanks[b].wins)
+                    };
+                    comparison.then(a.cmp(&b))
+                });
+            }
+        }
         self.current = self.turn_order.active.first().copied().unwrap_or(0);
         self.defense_player = 0;
         self.advance_defense();
@@ -2396,7 +2502,7 @@ impl Game {
             self.concurrent.energy.push((owner, effect));
         }
         for event in events {
-            economy::award_damage(&mut self.tanks, self.settings.economics.scoring, event);
+            self.award_damage(event);
         }
         self.sounds.post(if weapon == ItemId::Laser {
             Cue::Laser
@@ -2460,7 +2566,7 @@ impl Game {
             .liquid
             .update(shot_time, &mut self.terrain, &mut self.tanks, top, wall);
         for event in liquids.damage {
-            economy::award_damage(&mut self.tanks, self.settings.economics.scoring, event);
+            self.award_damage(event);
         }
         if liquids.burning {
             self.sounds.post(Cue::Burn);
@@ -2595,7 +2701,9 @@ impl Game {
                     }
                     self.tanks[killer].kills += if relation == Relation::Enemy { 1 } else { -1 };
                     let award = economy::kill_award(self.settings.economics.scoring, relation);
-                    economy::award_cash(&mut self.tanks, killer, award);
+                    if !self.simplified_weapons {
+                        economy::award_cash(&mut self.tanks, killer, award);
+                    }
                 }
                 self.expls.push(Explosion::new(
                     c,
@@ -2765,8 +2873,10 @@ impl Game {
                 });
             }
         }
-        for event in events.into_iter().filter(|_| !self.environment_action) {
-            economy::award_damage(&mut self.tanks, self.settings.economics.scoring, event);
+        if !self.environment_action {
+            for event in events {
+                self.award_damage(event);
+            }
         }
         self.tanks
             .iter()
@@ -2842,16 +2952,12 @@ impl Game {
                 } => {
                     self.sounds.post(Cue::ShieldHit);
                     let lost = self.tanks[victim].drain_shield(cost);
-                    economy::award_damage(
-                        &mut self.tanks,
-                        self.settings.economics.scoring,
-                        DamageEvent {
-                            owner: p.owner,
-                            victim,
-                            amount: lost,
-                            target: DamageTarget::Shield,
-                        },
-                    );
+                    self.award_damage(DamageEvent {
+                        owner: p.owner,
+                        victim,
+                        amount: lost,
+                        target: DamageTarget::Shield,
+                    });
                     if continues {
                         if p.kind == PKind::Carrier && p.vel.y >= 0.0 {
                             weapons::split_carrier(p, &mut next);
@@ -2930,7 +3036,7 @@ impl Game {
             next,
             &mut self.expls,
         ) {
-            economy::award_damage(&mut self.tanks, self.settings.economics.scoring, event);
+            self.award_damage(event);
         }
         for i in first_explosion..self.expls.len() {
             self.sound_for_explosion(i);
@@ -2942,7 +3048,7 @@ impl Game {
             self.settle_dirt = true;
         }
         for event in effects.damage {
-            economy::award_damage(&mut self.tanks, self.settings.economics.scoring, event);
+            self.award_damage(event);
         }
         let first_explosion = self.expls.len();
         self.expls.extend(effects.explosions);
@@ -3040,7 +3146,7 @@ impl Game {
             );
         }
         for event in events.into_iter().filter(|_| !neutral) {
-            economy::award_damage(&mut self.tanks, self.settings.economics.scoring, event);
+            self.award_damage(event);
         }
     }
 
@@ -3281,6 +3387,16 @@ impl Game {
                     "Esc cancels; Backspace resets.".into(),
                 ],
             ),
+            Phase::RoundOver | Phase::GameOver if self.simplified_weapons => {
+                ui::draw_victory_standings(
+                    fb,
+                    &self.tanks,
+                    self.round,
+                    self.settings.rounds,
+                    self.phase == Phase::GameOver,
+                    &self.round_msg,
+                )
+            }
             Phase::RoundOver => ui::draw_standings(
                 fb,
                 &self.tanks,
@@ -3974,6 +4090,242 @@ mod tests {
         game.start_game();
         assert!(game.phase == Phase::Shop);
         (game, directory)
+    }
+
+    #[test]
+    fn simplified_match_uses_five_weapons_skips_economy_and_counts_victories() {
+        for mode in [
+            PlayMode::Sequential,
+            PlayMode::Synchronous,
+            PlayMode::Simultaneous,
+        ] {
+            let mut g = Game::new();
+            g.settings.players = 2;
+            g.settings.rounds = 3;
+            g.settings.controllers.fill(Ctrl::Human);
+            g.settings.play.mode = mode;
+            g.settings.economics.cash_at_start = 100_000;
+            g.settings.economics.interest_rate = 0.3;
+            g.settings.economics.free_market = true;
+            g.settings.economics.scoring = crate::settings::ScoringMode::Greedy;
+            let market = toml::to_string(&g.market).unwrap();
+            let options = g.settings.clone();
+            g.menu.simplified_weapons = true;
+            g.start_from_menu().unwrap();
+            assert!(matches!(g.phase, Phase::Aim | Phase::Simultaneous));
+            for tank in &g.tanks {
+                let held: Vec<_> = weapons::ITEMS
+                    .iter()
+                    .filter(|item| tank.inventory.count(item.id) > 0)
+                    .map(|item| (item.id, tank.inventory.count(item.id)))
+                    .collect();
+                assert_eq!(
+                    held,
+                    vec![
+                        (ItemId::BabyMissile, 99),
+                        (ItemId::Missile, 10),
+                        (ItemId::Tracer, 20),
+                        (ItemId::Roller, 4),
+                        (ItemId::DirtBall, 4)
+                    ]
+                );
+            }
+            for round in 1..=3 {
+                assert_eq!(g.round, round);
+                g.tanks[0].inventory.remove(ItemId::Missile, 1);
+                for target in [DamageTarget::Tank, DamageTarget::Shield] {
+                    g.award_damage(DamageEvent {
+                        owner: 0,
+                        victim: 1,
+                        amount: 20,
+                        target,
+                    });
+                }
+                g.tanks[1].last_hit = Some(0);
+                g.tanks[1].health = 0;
+                assert!(g.resolve_deaths());
+                g.finish_round(&[0]);
+                g.finish_round(&[0]); // A repeated resolution must not count a second win.
+                assert_eq!(g.tanks[0].wins, round);
+                assert!(g
+                    .tanks
+                    .iter()
+                    .all(|t| t.account.cash.is_zero() && t.account.interest_earned.is_zero()));
+                assert_eq!(
+                    g.tanks[0].inventory.count(ItemId::Missile),
+                    10 - round as u8
+                );
+                assert_eq!(toml::to_string(&g.market).unwrap(), market);
+                g.continue_after_round();
+                assert!(g.phase != Phase::Shop);
+            }
+            assert!(g.phase == Phase::GameOver);
+            assert_eq!(g.settings, options);
+            assert!(crate::hall_of_fame::MODES
+                .iter()
+                .all(|&m| g.hall.entries(m).next().is_none()));
+            g.phase_t = 1.0;
+            g.standings_input(&ui::MenuInput {
+                activate: true,
+                ..Default::default()
+            });
+            assert!(g.phase == Phase::Menu && !g.hall_open);
+            g.menu.simplified_weapons = false;
+            g.start_from_menu().unwrap();
+            assert!(g.phase == Phase::Shop);
+            assert_eq!(g.tanks[0].inventory, Inventory::starter());
+        }
+    }
+
+    #[test]
+    fn simplified_teams_and_mass_kill_never_award_cash() {
+        let mut g = Game::new();
+        g.settings.players = 4;
+        g.settings.controllers.fill(Ctrl::Human);
+        g.settings.play.teams = TeamMode::Corporate;
+        g.settings.play.order = crate::settings::PlayOrder::WinnersFirst;
+        g.settings.economics.cash_at_start = 100_000;
+        g.menu.simplified_weapons = true;
+        g.start_from_menu().unwrap();
+        g.finish_round(&[0, 2]);
+        assert_eq!(
+            g.tanks.iter().map(|t| t.wins).collect::<Vec<_>>(),
+            vec![1, 0, 1, 0]
+        );
+        g.continue_after_round();
+        assert_eq!(g.turn_order.active, vec![0, 2, 1, 3]);
+        g.mass_kill();
+        assert!(g.tanks.iter().all(|t| t.account.cash.is_zero()));
+        assert_eq!(
+            g.tanks.iter().map(|t| t.wins).collect::<Vec<_>>(),
+            vec![1, 0, 1, 0]
+        );
+        assert!(g.round_msg.contains("nobody wins"));
+    }
+
+    #[test]
+    fn temporary_default_options_preserve_roster_config_and_next_custom_match() {
+        let (mut g, directory) = saved_game_test();
+        g.set_phase(Phase::Menu);
+        g.settings.rounds = 3;
+        g.settings.sound.enabled = false;
+        g.settings.hardware.fullscreen = true;
+        g.settings.physics.gravity = 0.8;
+        g.settings.landscape.sky = crate::settings::Sky::Cavern;
+        g.settings.play.teams = TeamMode::Corporate;
+        g.settings.weapons.scale = crate::settings::ExplosionScale::Large;
+        let configured = g.settings.clone();
+        let config = g.config_path.clone().unwrap();
+        g.settings.save(&config).unwrap();
+        g.menu.use_default_settings = true;
+        g.start_from_menu().unwrap();
+        let defaults = Settings::default();
+        assert_eq!(g.settings.sound, defaults.sound);
+        assert_eq!(g.settings.hardware, defaults.hardware);
+        assert_eq!(g.settings.economics, defaults.economics);
+        assert_eq!(g.settings.physics, defaults.physics);
+        assert_eq!(g.settings.landscape, defaults.landscape);
+        assert_eq!(g.settings.play, defaults.play);
+        assert_eq!(g.settings.weapons, defaults.weapons);
+        assert_eq!(g.settings.names, configured.names);
+        assert_eq!(g.settings.controllers, configured.controllers);
+        assert_eq!(g.settings.keys, configured.keys);
+        assert_eq!(g.settings.players, 3);
+        assert_eq!(g.settings.rounds, 3);
+        g.save_settings();
+        assert_eq!(Settings::load(&config).unwrap(), configured);
+        g.start_game(); // System Menu -> New Game uses the same temporary defaults.
+        assert_eq!(g.settings.physics, defaults.physics);
+        g.confirm_exit(ExitConfirmation::MainMenu);
+        g.exit_confirmation_input(&ui::MenuInput {
+            hotkey: Some('Y'),
+            ..Default::default()
+        });
+        assert_eq!(g.settings, configured);
+        assert!(g.configured_settings.is_none());
+        g.menu.use_default_settings = false;
+        g.start_from_menu().unwrap();
+        assert_eq!(g.settings, configured);
+        assert!(g.phase == Phase::Shop);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn temporary_defaults_restore_after_completion_and_checkpoint_restore() {
+        let (mut g, directory) = saved_game_test();
+        g.set_phase(Phase::Menu);
+        g.settings.physics.gravity = 0.9;
+        g.settings.economics.scoring = crate::settings::ScoringMode::Greedy;
+        g.settings.rounds = 2;
+        let configured = g.settings.clone();
+        g.menu.use_default_settings = true;
+        g.start_from_menu().unwrap();
+        g.finish_round(&[0]);
+        g.continue_after_round();
+        assert!(g.phase == Phase::Shop);
+        let checkpoint = directory.join("defaults-match.toml");
+        g.checkpoint().unwrap().save(&checkpoint).unwrap();
+        g.restore_game(&checkpoint).unwrap();
+        assert!(g.configured_settings.is_some());
+        skip_human_shops(&mut g);
+        g.finish_round(&[0]);
+        g.continue_after_round();
+        g.phase_t = 1.0;
+        g.standings_input(&ui::MenuInput {
+            activate: true,
+            ..Default::default()
+        });
+        assert!(g.phase == Phase::Menu && g.hall_open);
+        assert_eq!(g.hall_mode, crate::settings::ScoringMode::Standard);
+        assert_eq!(g.settings, configured);
+        g.hall_open = false;
+        g.menu.simplified_weapons = true;
+        g.start_from_menu().unwrap();
+        assert!(g.simplified_weapons && g.configured_settings.is_some());
+        g.set_phase(Phase::Menu);
+        assert_eq!(g.settings, configured);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn start_options_previews() {
+        let Ok(directory) = std::env::var("SCORCHED_START_PREVIEW_DIR") else {
+            return;
+        };
+        std::fs::create_dir_all(&directory).unwrap();
+        let mut fb = Fb::new();
+        let save = |fb: &Fb, name: &str| {
+            let mut image = fb.img.clone();
+            image.bytes = image
+                .bytes
+                .chunks_exact((W * 4) as usize)
+                .rev()
+                .flatten()
+                .copied()
+                .collect();
+            image.export_png(&format!("{directory}/{name}.png"));
+        };
+        let mut g = Game::new();
+        g.menu.page = Some(ui::Page::Players);
+        g.draw(&mut fb);
+        save(&fb, "start-default");
+        g.settings.players = 10;
+        g.menu.row = 10;
+        g.menu.simplified_weapons = true;
+        g.menu.use_default_settings = true;
+        g.draw(&mut fb);
+        save(&fb, "start-ten-players");
+        g.settings.rounds = 2;
+        g.settings.controllers.fill(Ctrl::Human);
+        g.start_from_menu().unwrap();
+        g.finish_round(&[9]);
+        g.draw(&mut fb);
+        save(&fb, "simplified-round");
+        g.continue_after_round();
+        g.finish_round(&[9]);
+        g.continue_after_round();
+        g.draw(&mut fb);
+        save(&fb, "simplified-final");
     }
 
     #[test]

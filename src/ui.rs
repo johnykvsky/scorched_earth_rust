@@ -395,6 +395,8 @@ pub(crate) struct MenuState {
     pub(crate) player_edit: Option<PlayerEdit>,
     pub(crate) key_edit: Option<crate::modes::KeyEditor>,
     pub(crate) reassign_only: bool,
+    pub(crate) simplified_weapons: bool,
+    pub(crate) use_default_settings: bool,
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FileField {
@@ -1095,6 +1097,22 @@ fn dialog_rect(page: Page, count: usize) -> (i32, i32, i32, i32) {
 }
 
 impl MenuState {
+    fn options(&self, page: Page, settings: &Settings) -> Vec<MenuRow> {
+        let mut options = rows(page, settings);
+        if page == Page::Players && !self.reassign_only {
+            options.insert(
+                settings.players,
+                MenuRow::toggle("Simplified weapons", 'S', self.simplified_weapons, 0).enabled(),
+            );
+            options.insert(
+                settings.players + 1,
+                MenuRow::toggle("Use default settings", 'U', self.use_default_settings, 0)
+                    .enabled(),
+            );
+        }
+        options
+    }
+
     pub(crate) fn handle_with_click(
         &mut self,
         s: &mut Settings,
@@ -1108,6 +1126,7 @@ impl MenuState {
             self.folder_edit.clone(),
             self.player_edit.clone(),
             self.key_edit.clone(),
+            (self.simplified_weapons, self.use_default_settings),
             s.clone(),
         );
         let action = self.handle(s, input);
@@ -1120,6 +1139,7 @@ impl MenuState {
                 self.folder_edit.clone(),
                 self.player_edit.clone(),
                 self.key_edit.clone(),
+                (self.simplified_weapons, self.use_default_settings),
                 s.clone(),
             )
             || action != MenuAction::Stay;
@@ -1177,7 +1197,7 @@ impl MenuState {
             return MenuAction::Stay;
         }
         if let Some(page) = self.page {
-            let options = rows(page, s);
+            let options = self.options(page, s);
             self.row = self.row.min(options.len() - 1);
             let (x, y, w, h) = dialog_rect(page, options.len());
             if page == Page::Players
@@ -1267,9 +1287,19 @@ impl MenuState {
                 return MenuAction::Stay;
             }
             if change && options[self.row].pending.is_none() {
-                if page == Page::Players && self.row == s.players {
-                    self.page = None;
-                    return MenuAction::Start;
+                if page == Page::Players {
+                    if self.row + 1 == options.len() {
+                        self.page = None;
+                        return MenuAction::Start;
+                    }
+                    if !self.reassign_only && self.row >= s.players {
+                        if self.row == s.players {
+                            self.simplified_weapons = !self.simplified_weapons;
+                        } else {
+                            self.use_default_settings = !self.use_default_settings;
+                        }
+                        return MenuAction::Stay;
+                    }
                 }
                 if page == Page::Landscape && self.row == 10 {
                     self.file_field = Some(FileField::Mountains);
@@ -1508,7 +1538,7 @@ pub(crate) fn draw_menu(fb: &mut Fb, s: &Settings, state: &MenuState) {
         Rgb(160, 190, 230),
     );
     if let Some(page) = state.page {
-        let options = rows(page, s);
+        let options = state.options(page, s);
         let (x, y, w, h) = dialog_rect(page, options.len());
         fb.bevel(x, y, w, h);
         fb.rect(x + 3, y + 3, w - 6, 24, Rgb(0, 0, 120));
@@ -1627,6 +1657,41 @@ mod menu_tests {
     use super::*;
 
     #[test]
+    fn start_checkboxes_toggle_with_keyboard_mouse_and_do_not_edit_options() {
+        let mut settings = Settings::default();
+        settings.players = 10;
+        let original = settings.clone();
+        let mut menu = MenuState {
+            page: Some(Page::Players),
+            ..Default::default()
+        };
+        assert!(!menu.simplified_weapons && !menu.use_default_settings);
+        let options = menu.options(Page::Players, &settings);
+        assert_eq!(options.len(), 13);
+        let (x, y, w, h) = dialog_rect(Page::Players, options.len());
+        assert!(y >= 0 && y + h <= H);
+        assert!(menu.handle_with_click(&mut settings, &key('S', false)).1);
+        assert!(menu.simplified_weapons && !menu.use_default_settings);
+        menu.handle(
+            &mut settings,
+            &MenuInput {
+                click: Some((x + w - 34, y + 32 + 11 * 24 + 8, 1)),
+                ..Default::default()
+            },
+        );
+        assert!(menu.use_default_settings);
+        assert_eq!(settings, original);
+        menu.handle(&mut settings, &key('U', false));
+        assert!(!menu.use_default_settings);
+        assert_eq!(
+            menu.handle(&mut settings, &key('D', false)),
+            MenuAction::Start
+        );
+        menu.reassign_only = true;
+        assert_eq!(menu.options(Page::Players, &settings).len(), 11);
+    }
+
+    #[test]
     fn player_setup_opens_the_key_editor_and_cancel_preserves_bindings() {
         let mut settings = Settings::default();
         let mut menu = MenuState {
@@ -1649,7 +1714,7 @@ mod menu_tests {
             },
         );
         assert!(menu.key_edit.is_none());
-        let (x, y, w, h) = dialog_rect(Page::Players, settings.players + 1);
+        let (x, y, w, h) = dialog_rect(Page::Players, settings.players + 3);
         let (_, clicked) = menu.handle_with_click(
             &mut settings,
             &MenuInput {
@@ -1926,7 +1991,7 @@ mod menu_tests {
             },
         );
         assert_eq!(s.shapes[0], before);
-        let (x, y, w, _) = dialog_rect(Page::Players, s.players + 1);
+        let (x, y, w, _) = dialog_rect(Page::Players, s.players + 3);
         menu.handle(
             &mut s,
             &MenuInput {
@@ -2680,6 +2745,42 @@ mod menu_tests {
             }
         }
     }
+}
+
+pub(crate) fn draw_victory_standings(
+    fb: &mut Fb,
+    tanks: &[Tank],
+    round: u32,
+    rounds: u32,
+    final_scores: bool,
+    message: &str,
+) {
+    let mut lines = vec![
+        if final_scores {
+            "FINAL STANDINGS".into()
+        } else {
+            format!("Round {round} of {rounds}")
+        },
+        format!("Simplified weapons - {round} of {rounds} rounds played"),
+    ];
+    if !final_scores {
+        lines.push(message.into());
+    }
+    lines.push(String::new());
+    let mut order: Vec<_> = (0..tanks.len()).collect();
+    order.sort_by_key(|&i| std::cmp::Reverse(tanks[i].wins));
+    for (rank, i) in order.into_iter().enumerate() {
+        let tank = &tanks[i];
+        lines.push(format!(
+            "{:2}. {:16}  Victories: {}",
+            rank + 1,
+            tank.name.chars().take(16).collect::<String>(),
+            tank.wins
+        ));
+    }
+    lines.push(String::new());
+    lines.push("Click or press any key".into());
+    dialog(fb, &lines);
 }
 
 pub(crate) fn draw_standings(

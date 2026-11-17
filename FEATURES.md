@@ -98,6 +98,7 @@ Status legend: [x] in prototype · [~] partial/simplified · [ ] not yet
 - [x] Mouse-only match controls: aiming/held adjustment, weapon cycling, both-button fire, panels, shop, prompts and standings
 - [x] Paused System Menu, Clear Screen, exact Mass Kill, player/team reassignment, Sound, confirmed New Game/Quit
 - [x] Esc confirmations before leaving the battlefield or quitting from the main menu
+- [x] Start checkboxes for Simplified weapons (five weapons, no shops/money, victories) and temporary default options
 - [x] Confirmed reset of all options and player setup from the main-menu System menu; Save Changes persists defaults
 - [x] Save from the buying screen, restore through the System Menu, filename entry and overwrite confirmation
 - [x] Persistent top-ten hall of fame per scoring mode, including Corporate banks and keyboard/mouse browsing

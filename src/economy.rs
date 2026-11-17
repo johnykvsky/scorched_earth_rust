@@ -317,17 +317,23 @@ pub fn kill_award(mode: ScoringMode, relation: Relation) -> i32 {
     }
 }
 pub fn award_damage(tanks: &mut [Tank], mode: ScoringMode, event: DamageEvent) {
+    record_damage(tanks, Some(mode), event);
+}
+
+pub fn record_damage(tanks: &mut [Tank], mode: Option<ScoringMode>, event: DamageEvent) {
     if event.amount > 0 && relation(tanks, event.owner, event.victim) == Relation::Enemy {
         let old = tanks[event.victim].ai_state.grudges[event.owner];
         tanks[event.victim].ai_state.grudges[event.owner] = old.saturating_add(event.amount as u32);
     }
-    let amount = damage_award(
-        mode,
-        relation(tanks, event.owner, event.victim),
-        event.amount,
-        event.target,
-    );
-    award_cash(tanks, event.owner, amount);
+    if let Some(mode) = mode {
+        let amount = damage_award(
+            mode,
+            relation(tanks, event.owner, event.victim),
+            event.amount,
+            event.target,
+        );
+        award_cash(tanks, event.owner, amount);
+    }
 }
 pub fn survival_pool(mode: ScoringMode, players: usize) -> u32 {
     if mode == ScoringMode::Basic {

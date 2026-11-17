@@ -132,10 +132,20 @@ pub fn survival(
     scoring: ScoringMode,
     split: bool,
 ) {
+    round_result(tanks, survivors, mode, Some(scoring), split);
+}
+
+pub fn round_result(
+    tanks: &mut [Tank],
+    survivors: &[usize],
+    mode: TeamMode,
+    scoring: Option<ScoringMode>,
+    split: bool,
+) {
     if survivors.is_empty() {
         return;
     }
-    let pool = economy::survival_pool(scoring, tanks.len());
+    let pool = scoring.map_or(0, |scoring| economy::survival_pool(scoring, tanks.len()));
     if mode != TeamMode::None && !split && tanks[survivors[0]].team.is_some() {
         let winners: Vec<_> = (0..tanks.len())
             .filter(|&i| group(tanks, i) == group(tanks, survivors[0]))

@@ -26,6 +26,19 @@ impl Inventory {
         inventory
     }
 
+    pub fn simplified() -> Self {
+        let mut inventory = Self::default();
+        for (item, quantity) in [
+            (ItemId::Missile, 10),
+            (ItemId::Roller, 4),
+            (ItemId::Tracer, 20),
+            (ItemId::DirtBall, 4),
+        ] {
+            inventory.add(item, quantity);
+        }
+        inventory
+    }
+
     pub fn count(&self, item: ItemId) -> u8 {
         self.counts[item as usize]
     }

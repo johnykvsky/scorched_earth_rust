@@ -252,6 +252,19 @@ paths. Main menu and dialog framebuffer previews were visually checked.
 **Done when:** every menu from the original exists. Unimplemented options are
 greyed out.
 
+**Additional Start options (2026-11-17):** Player Setup has unchecked-by-default
+Simplified weapons and Use default settings checkboxes. Simplified gives each
+player unlimited Baby Missiles, 10 Missiles, 4 Rollers, 20 Tracers and 4 Dirt
+Balls; no shops, cash awards, interest or market changes. Stock carries between
+rounds. Standings and sorted turn orders use victories; completed matches skip
+the cash hall of fame. Temporary defaults cover all seven option sections,
+preserve the chosen roster/bindings/round count, and restore configured options
+on returning to the menu. Save Changes never writes the temporary defaults.
+Both switches are session-only and absent from in-game player reassignment.
+Regression checks cover keyboard/mouse toggles, ten-player layout, all play
+modes, ammo carry-over, team victories, Mass Kill, cash suppression, switching
+back to normal play, early exit, completion, restart and checkpoint restore.
+
 ## Batch 3 – Physics menu (M)
 **Depends on:** 2
 
