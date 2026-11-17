@@ -1,141 +1,177 @@
-# Follow-up: how the original builds its terrain
+# Terrain fidelity follow-up — resolved 2026-11-17
 
-Open research left over from `MECHANICS.md` §5.3 and §18. Pick this up when we
-work on TODO batch 19 (terrain), or before calling the terrain section of
-`MECHANICS.md` complete.
+The previous implementation and research notes identified the wrong live
+routine. Scorched Earth v1.5's ordinary terrain uses an **integer random walk**,
+not the separate midpoint-displacement module. This follow-up corrects the
+implementation, caller/bounds claims and Cavern construction in `MECHANICS.md`
+§5.3. The two native-terrain questions formerly in §18 are resolved.
 
-## What we already know
+## Evidence and address convention
 
-- **Generator core** ✅ `2d4f:0645` (with recursion `2d4f:071d`). This is the
-  only midpoint-displacement routine in `SCORCH.EXE`:
-  ```
-  generate(leftH, rightH, n, H, amp):
-      N = 2^n − 1;  a[0] = leftH;  a[N] = rightH;  f = 1 / 2^H
-      rec(0, N, amp·f, f)
-  rec(lo, hi, amp, f):
-      mid = (lo + hi) / 2;  stop if mid == lo or mid == hi
-      a[mid] = (a[lo] + a[hi]) / 2 + (random(17) − 8) / 8 × amp
-      rec(lo, mid, amp·f, f);  rec(mid, hi, amp·f, f)
-  ```
-  Points are doubles in an array at far pointer `DS:cf60`. Constants 8.0 at
-  `DS:1f5e`, 2.0 at `DS:1f5a`. `random(n)` = `2bf9:048b`; random double in
-  0…1 = `2bf9:00f7`; `pow` = `1000:1077`.
-- **Its only caller** ✅ `2d90:002e` (call at `2d9b:004b`). It receives two
-  vertical bounds as arguments `[bp+0xc]` and `[bp+0x10]`, then sets:
-  - `mid = (bound1 + bound2) / 2`;
-  - `n = 6 − random(3)` (16–64 segments);
-  - `H = random double in 0…1`;
-  - `amp = random(mid / 4)`;
-  - both end heights = `mid`.
+Source: the shareware [SCORCH15.zip](https://archive.org/download/msdos_SCORCH15_shareware/SCORCH15.zip).
+The inspected `SCORCH.EXE` is 415,456 bytes, SHA-256
+`05e4a11643ec7055b1c811531a73c5b4f5c67c463612f3e4910e557301c3179f`.
+The original EXE, mountain files and phrase files remain outside this repo.
 
-  It then joins the points with straight lines across the width. It also checks
-  a field `+8 == 1` on an object passed in `[bp+6]` (a "land style"?).
-- **Nothing calls `2d90:002e` directly.** No far or near call, no far pointer
-  in the main data segment, and no immediate offset/segment pair in code
-  points to it. So it's reached through a function pointer (probably a virtual
-  method of a landscape object) that we haven't located.
-- **Bumpiness, Slope and Flatten Peaks are never read by terrain code** ✅. Only
-  the config code, the menu, Random Land and the title picture (`46bc:004a`)
-  touch them. DOSBox runs at 0/0, 100/0, 0/100, 100/100 and Flatten Peaks on
-  looked alike.
-- **Round setup** ✅ `323a:04de` picks the dirt colour scheme (`random(6)`, table
-  at `DS:5036`) and the wall type. It is a good place to look for the call that
-  builds the landscape.
+Code addresses below use `tools/re/dis.py`'s Ghidra convention: load-relative
+segments plus `0x1000`. Literal far pointers in the EXE contain load-relative
+segments, e.g. `223a:0a68` points to the routine labelled `323a:0a68` here.
+`DS:` offsets use the data block at file offset `0x55d80`.
 
-## Open questions
+## Why the old investigation stalled
 
-1. **End heights and vertical range.** What are the two bounds passed to
-   `2d90:002e`, and are the end heights really both `mid`? (Screenshots show
-   different left and right edge heights, so something else is going on:
-   maybe a wider curve that's clipped, or the result is adjusted afterwards.)
-   How is the **Cavern ceiling** line made: the same routine called a second
-   time with other bounds?
-2. **The function pointer.** Which object, method table and call site lead to
-   `2d90:002e`? Finding it answers question 1, because the caller pushes the
-   bounds.
+The midpoint wrapper at `2d90:002e` really allocates `2^n` points, seeds equal
+endpoints and calls the recursive midpoint generator at `2d4f:0645`. However,
+there is no relocated pointer to that wrapper and no direct caller found by
+`tools/re/callers.py`. The earlier claim that an unidentified virtual method
+*must* call it was an inference, not a verified fact.
 
-## Four ways to find out
+Following the **actual object construction** resolves the question:
 
-### 1. Check the reverse-engineering projects first (cheapest)
+1. `323a:0c88` constructs the global DefaultLand at `DS:d4be` using `323a:0b6b`.
+2. `323a:0ba0` installs **vtable `DS:508c`**. Its first pointer is
+   `68 0a 3a 22`, a relocated pointer to **`323a:0a68`**.
+3. The constructor writes **20, 20, 0** at object offsets `+0a,+0c,+0e`.
+   LAND1, LAND2 and FLATLAND are not copied into the object.
+4. Round setup `323a:0711–0758` chooses the global default object when no scanned
+   mountain is selected, then calls renderer `323a:083f` with the graphics bounds.
+5. Renderer `323a:0975` calls the object's first virtual method, the integer walk.
 
-- DigitalCyberSoft `scorch/terrain.py`
-  (<https://github.com/DigitalCyberSoft/scorchedearth-python>) and gosuwachu
-  `src/terrain.ts` (<https://github.com/gosuwachu/scorched-earth>) cite
-  `FUN_2d4f_0645`/`_071d` and note `cf60[0] == cf60[last]`.
-- gosuwachu says Slope's real effect "lives in the unrecovered terrain-style
-  layer (`FUN_323a_*` vtable build)", which is a strong hint about where the
-  pointer is set.
-- Look for: how they pick the bounds and end heights, and any cited addresses
-  for the caller or vtable. **Verify every claim in the disassembly** before
-  putting it in `MECHANICS.md`. Both projects have had wrong guesses before.
+`DS:50a0`, suggested in the old follow-up, is the **abstract base** vtable.
+Base constructor `323a:07f5` installs it before the DefaultLand constructor
+replaces it. Following the override, rather than stopping at the base class,
+identifies the concrete method. The title picture constructs a separate stack-local
+DefaultLand/ScannedMountain (`46bc:0008–003d`), not the global round generator.
 
-### 2. Search harder for the function pointer (static)
+## Recovered rules
 
-- Search the **whole file**, not just the main data segment, for far pointers
-  to `2d90:002e`. The same address can be written as many segment:offset
-  pairs; the linear address is `(0x2d90 − 0x1000) × 16 + 0x2e`. Borland
-  vtables may sit in another segment.
-- Look at **constructors that store far pointers into objects**, e.g.
-  `mov word es:[bx+…], offset` followed by `mov word es:[bx+…+2], segment`, in
-  the `323a` module (round setup) and around the menu preview code
-  (`46bc:003d` calls `323a:049c`, `323a:0bcb`, `323a:083f`). Note
-  `32b5:006d` writes `0x50a0` into an object, which may be a vtable pointer
-  (`DS:50a0`).
-- Check `DS:50a0` and nearby for tables of far pointers whose targets land in
-  segment `2d4f`–`2d90`.
-- Find the code that calls through those tables (`call far [bx+…]` or
-  `call dword ptr es:[bx+…]`) during round setup.
-- Tools: `tools/re/dis.py`, `tools/re/refs.py`, `tools/re/callers.py`. Use
-  plain byte search (`bytes.find`), **not** `re.escape`, which silently missed
-  matches earlier.
+The full pseudocode and references are in `MECHANICS.md` §5.3.
 
-### 3. Watch it run in a debugger (definitive)
+- Initial y: `random(ymax − ymin − 60) + ymin + 40`; initial grade is zero.
+- Each column changes grade with 20% probability; its −1/0/+1 acceleration
+  doubles with a further 20% probability. Grade is accumulated across columns.
+- The upper height limit is `ymin + 40`, with upward motion reset to **+1**
+  when it hits that limit. At `ymax − 1`, positive grade resets to **0**.
+- End heights are independent results of the walk. No equal-endpoint rule.
+- The object alternates horizontal direction each time it renders native land.
+- In the normal 640×480 capture, graphics bounds are x=3..636, y=24..476.
+  The original's three-pixel frame and toolbar determine these bounds.
+- Cavern splits y at its midpoint. Generate the lower-half floor **first**,
+  then an independent upper-half roof using the same RNG stream and direction.
+  The roof is filled upward and the floor downward. Minimum native gap: 41 px.
+- The Cavern gradient is fixed by global y, not distance to local surfaces.
+  Its 30 VGA shades use `(i+8)/45` of the round's earth colour.
+- The six actual dirt colours at `DS:5036` are uniform fills, not depth bands.
 
-- Needs a DOSBox build with the debugger. **DOSBox-X** has one built in;
-  classic DOSBox needs a special "debug" build. The installed DOSBox 0.74 has
-  no debugger. DOSBox-X is **not** in Manjaro's official repos (checked
-  2026-10-13); it's in the AUR (`dosbox-x` or `dosbox-x-sdl2`), or available as
-  a Flatpak (`com.dosbox_x.DOSBox-X`). You'd install it yourself.
-- Set a breakpoint on the generator's entry. In a running game the real segment
-  is the load segment + the game's PSP offset, so read the actual CS from the
-  debugger once (e.g. break on `int 21h` at startup, or search memory for the
-  routine's first bytes `C8 12 00 00 56 57`).
-- When it hits:
-  - read the arguments on the stack (`leftH`, `rightH`, `n`, `H`, `amp`);
-  - step out to see the caller and the bounds it passed;
-  - walk up the stack to find the function-pointer call site (question 2).
-- Do the same with **Sky = Cavern** to see whether it runs twice, and with what
-  bounds.
+Our non-Classic sliders now expose the original generator class's parameters:
+Bumpiness changes the probability of grade changes, Slope the probability of
+doubling acceleration, and Flatten Peaks resets grades outside −3..3 to zero.
+This is an enhancement: v1.5 fixes those fields at 20/20/off. Classic ignores
+all three settings and preserves those constructor values.
 
-### 4. Measure the original's output (fallback, and useful anyway)
+## Instruction oracle
 
-- Generate ~30 landscapes per setup in the original with
-  `tools/re/run_original.sh`, and measure from the screenshots:
-  - left and right edge heights;
-  - highest and lowest points;
-  - number of straight segments;
-  - steepest slope.
-- This gives typical ranges to tune our generator against. It won't give the
-  formula, but it's exactly the side-by-side check TODO batch 19 asks for
-  ("default terrain looks like the original's").
-- Setup:
-  ```sh
-  mkdir -p ~/games/scorch-test && cd ~/games/scorch-test
-  unzip /path/to/SCORCH15.zip            # from archive.org, msdos_SCORCH15_shareware
-  # run once, press "c" on the main menu to write SCORCH.CFG, then quit
-  export GAME_DIR=~/games/scorch-test
-  tools/re/run_original.sh /tmp/land01.png MAXPLAYERS=2 MTN_PERCENT=0.000000 SKY=Plain
-  ```
-  Set `MTN_PERCENT=0.000000` so no scanned mountains appear. With
-  `INITIAL_CASH` above 0 the shop opens first, and the script doesn't handle
-  that.
-- The battlefield in the default 360×480 mode is captured at 720×480
-  (horizontal pixels doubled).
+`tools/re/terrain_oracle.py` reads the matching executable and disassembles
+`323a:0980–0b6a`. A deliberately small 16-bit interpreter executes the original
+integer generation and plot/clipping instructions. Only RNG and video driver
+calls are replaced. Unknown instructions/calls abort. Constructor bytes, the
+vtable relocation and the absence of a relocated midpoint-wrapper pointer are
+checked before generation.
 
-## When done
+The injected RNG is the tribute's xorshift64, **not a reconstruction of DOS's
+RNG**. This isolates the geometry/control flow for exact comparisons. The
+committed `tests/fixtures/terrain-oracle.toml` contains derived numeric profiles
+only: normal/reverse walks, Cavern's consecutive floor/roof RNG streams, extreme
+HUD bounds, flat input and flattening behavior. Rust tests compare every column.
 
-- Put the answers into `MECHANICS.md` §5.3 with `seg:off` references, and
-  remove items 1–2 from `MECHANICS.md` §18.
-- Reword the remaining §18 item ("per-frame drawing speed") as a note: the
-  original ran as fast as the PC allowed, so there is no single value to find.
-- Update TODO batch 19's terrain tasks with the real end-height and range rules.
+Reproduce without adding shareware files to the repo:
+
+```sh
+python3 tools/re/terrain_oracle.py /path/to/SCORCH.EXE > /tmp/terrain-oracle.toml
+cmp tests/fixtures/terrain-oracle.toml /tmp/terrain-oracle.toml
+cargo test random_walk_matches_original_instruction_oracle
+```
+
+The interpreter is specific to this routine, not a general DOS emulator. Its
+comparison does not establish original RNG seeds, artwork or complete VGA/UI
+pixel parity.
+
+## DOSBox comparison
+
+`tools/re/capture_terrain.py` runs an **unmodified EXE** in disposable copies.
+It selects two humans, 640×480, Plain/Cavern, 20/20/off, no scanned mountains,
+no random land, no wind and no hostile environment. Its controller inspects
+each screen before Enter and controls only its own DOSBox process/window.
+A manifest records the executable hash and settings; successful captures resume
+without being overwritten. Slow title rendering/setup fades are handled by
+screen-state checks. No personal DOSBox configuration or source game is edited.
+
+```sh
+python3 tools/re/capture_terrain.py --game-dir /path/to/scorch \
+  --output /tmp/scorched-terrain-reference --samples 30
+SCORCHED_TERRAIN_FIDELITY_DIR=/tmp/scorched-terrain-updated cargo test terrain_fidelity_previews
+python3 tools/re/compare_terrain.py --original /tmp/scorched-terrain-reference \
+  --rust /tmp/scorched-terrain-updated --output /tmp/scorched-terrain-comparison
+```
+
+The source directory needs a CFG saved by the original game. Change a setting
+and choose Save Changes if it is greyed out. Capture dependencies: DOSBox,
+xdotool, ImageMagick `import`, Pillow. Live GUI
+execution needs the environment's normal GUI approval.
+
+The comparison uses independent seeds. Original screenshots include two tank
+pads; the Rust export is bare terrain. The tribute uses its own HUD and fills
+to y=479, while the original's inner frame ends at 476. These distinctions are
+reported by the measurement tool rather than hidden in a pixel-difference score.
+Screenshots/contact sheets remain in `/tmp`; source assets are not committed.
+
+## Recorded comparison (2026-11-17)
+
+All **60 unmodified DOSBox captures** passed the completed-battlefield check:
+30 Plain and 30 Cavern at 640×480. These were compared with 30 Rust renders
+for each sky. The contact sheet was visually inspected after incomplete
+frames were rejected and replaced. The captured red hull is required below
+the toolbar before acceptance; seeing only the HUD is insufficient during
+Cavern generation.
+
+| Source | Sky | Samples | Mean floor y | Mean relief | Mean absolute grade |
+|---|---|---:|---:|---:|---:|
+| DOSBox | plain | 30 | 267.31 | 411.00 | 2.248 |
+| Rust | plain | 30 | 267.37 | 403.73 | 2.247 |
+| DOSBox | cavern | 30 | 384.36 | 185.00 | 1.638 |
+| Rust | cavern | 30 | 388.20 | 187.00 | 1.755 |
+
+Units are native pixels. These are descriptive measurements, not a
+statistical equivalence test: RNG seeds differ, the original includes tank
+pads, and the two viewports have different bottom borders. Original edges
+were unequal in every captured Plain landscape, contradicting the old
+equal-endpoint target. Cavern floor/roof geometry and global shading now
+visually agree with the recovered algorithm.
+
+Artifacts from this run: `/tmp/scorched-terrain-reference` (screenshots and
+manifest), `/tmp/scorched-terrain-updated` (Rust renders), and
+`/tmp/scorched-terrain-comparison` (measurements, comparison report and contact
+sheet). Re-run the commands above if temporary files are no longer available.
+
+Validation: **315 Rust tests pass**, including exact instruction-oracle
+columns, known original Cavern VGA shades, reverse direction, independent
+ceilings, native clamps, Classic/default equivalence, slider behavior, roof
+settling and ten tank pads at both ordinary and tall multiplayer HUD bounds.
+The release build, Rust formatting, diff whitespace and Python compilation
+checks pass. No original executable, mountain or phrase data was added to git.
+
+## Adaptations and limits
+
+The recovered generator replaces the arbitrary 55–75% midpoint and the old
+short roof/96-pixel gap. Native Cavern now uses the recovered two half-field
+walks. The tribute supplies its own RNG, full-viewport bounds and tank pads;
+it does not reproduce a DOS session from its RNG seed. Its generation direction
+is kept with the game, independent of menu previews.
+
+MTN/PNG loading remains our existing bounded decoder and scaling policy.
+Cavern combined with imported art keeps ground in the lower half so the native
+roof leaves placement room. That import policy is local; this follow-up does
+not claim to reconstruct ScannedMountain's complete cropping/mapping logic.
+Other sky artwork, storm timing and rendering-speed approximations retain
+their existing documented limits. CPU-dependent per-frame drawing speed is a
+note, not a missing universal constant to discover.

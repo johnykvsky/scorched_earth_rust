@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-macroquad = "0.4"
+macroquad = { version = "0.4", features = ["audio"] }
 font8x8 = "0.3"
 serde = { version = "1", features = ["derive"] }
 toml = "1"

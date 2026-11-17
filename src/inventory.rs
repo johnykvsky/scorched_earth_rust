@@ -103,19 +103,36 @@ mod tests {
     }
 
     #[test]
-    fn selection_wraps_and_skips_accessories_pending_weapons_and_empty_stock() {
+    fn selection_wraps_and_skips_accessories_and_empty_stock() {
         let mut stock = Inventory::default();
         stock.add(ItemId::Battery, 5);
-        stock.add(ItemId::LeapFrog, 5);
         stock.add(ItemId::DirtBall, 1);
         stock.add(ItemId::Tracer, 1);
-        assert_eq!(stock.cycle_weapon(ItemId::BabyMissile, false), ItemId::Tracer);
-        assert_eq!(stock.cycle_weapon(ItemId::BabyMissile, true), ItemId::DirtBall);
-        assert_eq!(stock.cycle_weapon(ItemId::DirtBall, false), ItemId::BabyMissile);
+        assert_eq!(
+            stock.cycle_weapon(ItemId::BabyMissile, false),
+            ItemId::Tracer
+        );
+        assert_eq!(
+            stock.cycle_weapon(ItemId::BabyMissile, true),
+            ItemId::DirtBall
+        );
+        assert_eq!(
+            stock.cycle_weapon(ItemId::DirtBall, false),
+            ItemId::BabyMissile
+        );
         stock.remove(ItemId::Tracer, 1);
-        assert_eq!(stock.cycle_weapon(ItemId::BabyMissile, false), ItemId::DirtBall);
+        assert_eq!(
+            stock.cycle_weapon(ItemId::BabyMissile, false),
+            ItemId::DirtBall
+        );
         stock.remove(ItemId::DirtBall, 1);
-        assert_eq!(stock.cycle_weapon(ItemId::BabyMissile, false), ItemId::BabyMissile);
-        assert_eq!(stock.cycle_weapon(ItemId::BabyMissile, true), ItemId::BabyMissile);
+        assert_eq!(
+            stock.cycle_weapon(ItemId::BabyMissile, false),
+            ItemId::BabyMissile
+        );
+        assert_eq!(
+            stock.cycle_weapon(ItemId::BabyMissile, true),
+            ItemId::BabyMissile
+        );
     }
 }

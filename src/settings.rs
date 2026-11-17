@@ -17,16 +17,68 @@ macro_rules! option_enum {
         pub enum $name { $($variant),+ }
     };
 }
-option_enum!(FlightSound { Off, Position, Velocity });
-option_enum!(ScoringMode { Basic, Standard, Greedy });
-option_enum!(WallType { None, WrapAround, Padded, Rubber, Spring, Concrete, Random, Erratic });
-option_enum!(Sky { Plain, Stormy, Stars, Shaded, Sunset, Cavern, Black, Random });
-option_enum!(PlayMode { Sequential, Synchronous, Simultaneous });
-option_enum!(PlayOrder { Random, LosersFirst, WinnersFirst, RoundRobin });
-option_enum!(TeamMode { None, Standard, Corporate, Vicious });
-option_enum!(TalkingTanks { Off, Computers, All });
-option_enum!(BombIcon { Invisible, Small, Big });
-option_enum!(ExplosionScale { Normal, Medium, Large });
+option_enum!(FlightSound {
+    Off,
+    Position,
+    Velocity
+});
+option_enum!(ScoringMode {
+    Basic,
+    Standard,
+    Greedy
+});
+option_enum!(WallType {
+    None,
+    WrapAround,
+    Padded,
+    Rubber,
+    Spring,
+    Concrete,
+    Random,
+    Erratic
+});
+option_enum!(Sky {
+    Plain,
+    Stormy,
+    Stars,
+    Shaded,
+    Sunset,
+    Cavern,
+    Black,
+    Random
+});
+option_enum!(PlayMode {
+    Sequential,
+    Synchronous,
+    Simultaneous
+});
+option_enum!(PlayOrder {
+    Random,
+    LosersFirst,
+    WinnersFirst,
+    RoundRobin
+});
+option_enum!(TeamMode {
+    None,
+    Standard,
+    Corporate,
+    Vicious
+});
+option_enum!(TalkingTanks {
+    Off,
+    Computers,
+    All
+});
+option_enum!(BombIcon {
+    Invisible,
+    Small,
+    Big
+});
+option_enum!(ExplosionScale {
+    Normal,
+    Medium,
+    Large
+});
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -34,6 +86,10 @@ pub struct Settings {
     pub players: usize,
     pub rounds: u32,
     pub controllers: [Ctrl; MAX_PLAYERS],
+    pub shapes: [crate::tank::Shape; MAX_PLAYERS],
+    pub names: [String; MAX_PLAYERS],
+    pub team_ids: [u8; MAX_PLAYERS],
+    pub keys: [crate::modes::Bindings; MAX_PLAYERS],
     pub sound: SoundSettings,
     pub hardware: HardwareSettings,
     pub economics: EconomicsSettings,
@@ -53,6 +109,7 @@ pub struct SoundSettings {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct HardwareSettings {
+    pub fullscreen: bool,
     pub firing_delay: u16,
     pub falling_delay: u16,
 }
@@ -130,8 +187,19 @@ impl Default for Settings {
             players: 2,
             rounds: 10,
             controllers,
-            sound: SoundSettings { enabled: true, flight: FlightSound::Off },
-            hardware: HardwareSettings { firing_delay: 100, falling_delay: 10 },
+            shapes: [crate::tank::Shape::Treads; MAX_PLAYERS],
+            names: std::array::from_fn(|i| format!("Player {}", i + 1)),
+            team_ids: std::array::from_fn(|i| (i % 2) as u8),
+            keys: crate::modes::defaults(),
+            sound: SoundSettings {
+                enabled: true,
+                flight: FlightSound::Off,
+            },
+            hardware: HardwareSettings {
+                fullscreen: false,
+                firing_delay: 100,
+                falling_delay: 10,
+            },
             economics: EconomicsSettings {
                 interest_rate: 0.05,
                 cash_at_start: 0,
@@ -207,6 +275,25 @@ impl Settings {
             };
         }
         range!(self.players, 2, MAX_PLAYERS, "Players");
+        crate::modes::validate(&self.keys, &self.controllers, self.players)?;
+        if self.team_ids.iter().any(|&id| id >= MAX_PLAYERS as u8) {
+            return Err("Team numbers must be 1-10".into());
+        }
+        if self.names.iter().any(|name| {
+            name.trim().is_empty()
+                || name.chars().count() > 16
+                || name.chars().any(char::is_control)
+        }) {
+            return Err("Player names must contain 1-16 printable characters".into());
+        }
+        if self
+            .controllers
+            .iter()
+            .zip(self.shapes)
+            .any(|(ctrl, shape)| *ctrl == Ctrl::Human && shape == crate::tank::Shape::Triple)
+        {
+            return Err("Triple turret is available only to computer players".into());
+        }
         range!(self.rounds, 1, 1000, "Rounds");
         range!(self.hardware.firing_delay, 0, 500, "Firing Delay");
         range!(self.hardware.falling_delay, 0, 1000, "Falling Delay");
@@ -219,7 +306,12 @@ impl Settings {
         range!(self.landscape.max_wind, 0, 500, "Max Wind");
         range!(self.landscape.bumpiness, 0, 100, "Bumpiness");
         range!(self.landscape.slope, 0, 100, "Slope");
-        range!(self.landscape.scanned_mountains_percent, 0, 100, "Scanned Mountains");
+        range!(
+            self.landscape.scanned_mountains_percent,
+            0,
+            100,
+            "Scanned Mountains"
+        );
         range!(self.play.talk_probability, 0, 100, "Talk Probability");
         range!(self.weapons.arms_level, 0, 4, "Arms Level");
         Ok(())
@@ -233,36 +325,45 @@ impl Settings {
         };
         let settings: Self = toml::from_str(&text)
             .map_err(|e| format!("Invalid settings in {}: {e}", path.display()))?;
-        settings.validate().map_err(|e| format!("Invalid settings in {}: {e}", path.display()))?;
+        settings
+            .validate()
+            .map_err(|e| format!("Invalid settings in {}: {e}", path.display()))?;
         Ok(settings)
     }
 
     pub fn save(&self, path: &Path) -> Result<(), String> {
         self.validate()?;
         let text = toml::to_string_pretty(self).map_err(|e| e.to_string())?;
-        let parent = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("Cannot create {}: {e}", parent.display()))?;
-        let filename = path.file_name().ok_or("Settings path needs a filename")?;
-        let mut temporary = filename.to_os_string();
-        temporary.push(format!(".{}.tmp", std::process::id()));
-        let temporary = parent.join(temporary);
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temporary)
-            .map_err(|e| format!("Cannot write {}: {e}", temporary.display()))?;
-        let result = (|| {
-            file.write_all(text.as_bytes())?;
-            file.sync_all()?;
-            drop(file);
-            fs::rename(&temporary, path)
-        })();
-        if result.is_err() {
-            let _ = fs::remove_file(&temporary);
-        }
-        result.map_err(|e| format!("Cannot save {}: {e}", path.display()))
+        save_atomic(path, &text)
     }
+}
+
+/// Replace a complete data file only after its temporary file has been flushed.
+pub(crate) fn save_atomic(path: &Path, text: &str) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    fs::create_dir_all(parent).map_err(|e| format!("Cannot create {}: {e}", parent.display()))?;
+    let filename = path.file_name().ok_or("Data path needs a filename")?;
+    let mut temporary = filename.to_os_string();
+    temporary.push(format!(".{}.tmp", std::process::id()));
+    let temporary = parent.join(temporary);
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temporary)
+        .map_err(|e| format!("Cannot write {}: {e}", temporary.display()))?;
+    let result = (|| {
+        file.write_all(text.as_bytes())?;
+        file.sync_all()?;
+        drop(file);
+        fs::rename(&temporary, path)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result.map_err(|e| format!("Cannot save {}: {e}", path.display()))
 }
 
 pub fn config_path(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<PathBuf, String> {
@@ -277,6 +378,16 @@ pub fn config_path(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result
     let directory = dirs::config_dir()
         .ok_or("Cannot find the configuration directory; pass a settings filename")?;
     Ok(directory.join("scorched/settings.toml"))
+}
+
+impl ExplosionScale {
+    pub fn multiplier(self) -> f32 {
+        match self {
+            Self::Normal => 1.0,
+            Self::Medium => 2.0,
+            Self::Large => 3.0,
+        }
+    }
 }
 
 impl HardwareSettings {
@@ -370,9 +481,27 @@ mod tests {
             "[[invalid",
         ] {
             fs::write(&path, text).unwrap();
-            assert!(Settings::load(&path).is_err(), "accepted invalid config: {text}");
+            assert!(
+                Settings::load(&path).is_err(),
+                "accepted invalid config: {text}"
+            );
             assert_eq!(fs::read_to_string(&path).unwrap(), text);
         }
+    }
+
+    #[test]
+    fn shapes_round_trip_and_human_triple_is_rejected() {
+        let directory = TestDirectory::new();
+        let path = directory.0.join("shapes.toml");
+        let mut s = Settings::default();
+        s.shapes[0] = crate::tank::Shape::Bunker;
+        s.shapes[1] = crate::tank::Shape::Triple;
+        s.save(&path).unwrap();
+        assert_eq!(Settings::load(&path).unwrap(), s);
+        s.controllers[1] = Ctrl::Human;
+        assert!(s.validate().is_err());
+        assert!(s.save(&path).is_err());
+        assert_ne!(Settings::load(&path).unwrap(), s);
     }
 
     #[test]
@@ -394,6 +523,8 @@ mod tests {
         let path = config_path([std::ffi::OsString::from("other game.toml")]).unwrap();
         assert_eq!(path, PathBuf::from("other game.toml"));
         assert!(config_path(["one.toml".into(), "two.toml".into()]).is_err());
-        assert!(config_path(std::iter::empty()).unwrap().ends_with("scorched/settings.toml"));
+        assert!(config_path(std::iter::empty())
+            .unwrap()
+            .ends_with("scorched/settings.toml"));
     }
 }

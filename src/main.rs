@@ -1,11 +1,28 @@
 mod ai;
+mod controls;
+mod earth;
 mod economy;
+mod energy;
+mod environment;
 mod game;
 mod gfx;
+mod guidance;
+mod hall_of_fame;
 mod inventory;
+mod landscape;
+mod liquid;
+mod modes;
+mod movement;
 mod physics;
+mod play;
+mod presentation;
+mod saved_game;
 mod settings;
+mod shields;
 mod shop;
+mod sound;
+mod speech;
+mod system;
 mod tank;
 mod terrain;
 mod ui;
@@ -38,11 +55,30 @@ async fn main() {
     };
     let mut game = game::Game::new();
     game.load_settings(path);
+    let mut audio = match sound::Player::load().await {
+        Ok(audio) => Some(audio),
+        Err(error) => {
+            eprintln!("{error}; continuing without sound.");
+            None
+        }
+    };
 
+    let mut fullscreen = false;
     loop {
+        if is_key_pressed(KeyCode::F11) {
+            game.toggle_fullscreen();
+        }
+        if fullscreen != game.fullscreen() {
+            fullscreen = game.fullscreen();
+            set_fullscreen(fullscreen);
+        }
         let dt = get_frame_time().min(1.0 / 30.0);
         if !game.update(dt) {
             break;
+        }
+        let sound = game.take_sound_frame();
+        if let Some(audio) = &mut audio {
+            audio.update(sound, dt);
         }
         game.draw(&mut fb);
         tex.update(&fb.img);

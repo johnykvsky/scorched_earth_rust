@@ -26,7 +26,7 @@ by remakes or clones.
 15. [Presentation](#15-presentation)
 16. [Settings reference (`scorch.cfg`)](#16-settings-reference-scorchcfg)
 17. [File formats](#17-file-formats)
-18. [Unknowns](#18-unknowns)
+18. [Verification notes](#18-verification-notes)
 
 ---
 
@@ -240,44 +240,81 @@ EXE these three variables (`DS:516e`, `5170`, `5172`) are only:
 No terrain code reads them. A DOSBox test of 0/0, 100/0, 0/100 and 100/100,
 and Flatten Peaks on, produced the same kind of landscape every time.
 
-**The terrain generator** ✅ (`2d4f:0645`, the only midpoint-displacement
-routine in the game):
+**Live default generator — corrected 2026-11-17** ✅. The earlier notes
+mistook the midpoint-displacement routine for the live generator. That routine
+exists at `2d4f:0645` / wrapper `2d90:002e`, but it is **not selected by the
+stock DefaultLand object**. Its equal endpoints and 16/32/64-point subdivision
+are not rules for ordinary v1.5 landscapes.
+
+The actual path, verified in the matching shareware EXE:
+
+- Initialisation `323a:0c88` constructs the global DefaultLand at `DS:d4be`.
+  Constructor `323a:0b6b` installs vtable `DS:508c`; its first far pointer is
+  **`223a:0a68`** (relocatable EXE segment), i.e. **`323a:0a68`** using our
+  disassembler's Ghidra numbering. It hard-codes the parameters **20 / 20 / off**
+  at object offsets `+0a / +0c / +0e`, rather than reading LAND1/LAND2/FLATLAND.
+- Round setup `323a:0711–0758` selects this object when not using a scanned
+  mountain and passes the current graphics bounds to wrapper `323a:083f`.
+  The indirect call at `323a:0975` selects `323a:0a68`.
+- Graphics setup `323a:02bd` gives a three-pixel frame:
+  `xmin = 3`, `xmax = width − 4`, `ymax = height − 4`; `ymin` depends on the
+  toolbar. The ordinary 640×480 and 360×480 captures have `ymin = 24`.
+
+The generator is an **integer random walk in grade**, one step per column:
 
 ```
-generate(leftH, rightH, n, H, amp):
-    N = 2^n − 1;  a[0] = leftH;  a[N] = rightH
-    f = 1 / 2^H
-    rec(0, N, amp·f, f)
-
-rec(lo, hi, amp, f):
-    mid = (lo + hi) / 2;  stop if mid == lo or mid == hi
-    a[mid] = (a[lo] + a[hi]) / 2 + (random(17) − 8) / 8 × amp     # 8.0, 2.0 at DS:1f5e, DS:1f5a
-    rec(lo, mid, amp·f, f);  rec(mid, hi, amp·f, f)
+y = random(ymax − ymin − 60) + ymin + 40
+velocity = 0
+for x in the object's current direction, including both end columns:
+    plot(x, y)
+    if random(100) < 20:
+        change = random(3) − 1
+        if random(100) < 20: change *= 2
+        velocity += change
+        # Optional class parameter, hard-coded OFF in the shipped constructor:
+        if flatten and abs(velocity) > 3: velocity = 0
+    y += velocity
+    if y < ymin + 40:
+        y = ymin + 40
+        if velocity < 0: velocity = 1
+    if y > ymax − 1:
+        y = ymax − 1
+        if velocity > 0: velocity = 0
 ```
 
-Its caller (`2d90:002e`, reached through a function pointer) picks
-`n = 6 − random(3)` (so 16–64 segments), a random roughness `H` in 0…1, and an
-amplitude `random(mid/4)`, where `mid` is the middle of the vertical range.
-The points are then joined by straight lines across the width. In DOSBox the
-landscapes are smooth polylines of roughly that many segments. How the end
-heights and the vertical range are chosen wasn't fully traced (§18).
+The first height is uniform from `ymin + 40` through `ymax − 21`; subsequent
+heights stay within `[ymin + 40, ymax − 1]`. The far edge is the walk's result,
+**not an equal endpoint**. The final column still consumes its random draws.
+Wrapper `323a:0855–0873` toggles the persistent object's direction between
+left-to-right and right-to-left on each generation. The title picture uses a
+separate stack-local object (`46bc:0008`), so it does not toggle the global one.
 
-**Each round** ✅ (`323a:04de`): one of **6 dirt colour schemes** is chosen at
-random (table at `DS:5036`). Random/Erratic walls pick one of wall types 0–5.
+**Cavern construction** ✅ `323a:08d7–095f`: split the vertical interval at
+`middle = trunc((ymin + ymax) / 2)`. Run the same walk first in `[middle,ymax]`
+for the floor, then in `[ymin,middle]` for the roof, sharing the RNG stream and
+horizontal direction. Object flag `+2` reverses the fill side in `323a:0980`:
+soil is at/below the floor and strictly above the roof's surface row.
+Consequently the unmodified generated surfaces have at least **41 pixels** of
+vertical separation. The roof is not a scaled or mirrored copy of the floor.
 
-**Cavern sky** (DOSBox ✅): a solid dirt **ceiling** hangs from the top. It is a
-second jagged polyline in the same colour as the ground. The open space between
-is a vertical gradient from the dirt colour at top and bottom to near-black in
-the middle. Tanks can sit under the overhangs.
+**Cavern shading** ✅ `42c2:084a–090d`: 30 **horizontal** bands about the global
+field midpoint, independent of local floor/roof shapes. The row selects
+`i = trunc(29 × abs(y − middle) / half_height)`. VGA palette components are
+`trunc(earth_component × (i + 8) / 45)` (`DS:6270 = 45.0`). Thus the middle
+is dim earth colour, not absolute black. DOSBox expands a VGA component with
+`(component << 2) | (component >> 4)`.
 
----|---|---|---|
-| Bumpiness (`LAND1`) | 0–100 | 20 | roughness |
-| Slope (`LAND2`) | 0–100 | 20 | steepness |
-| Flatten Peaks (`FLATLAND`) | on/off | off (📘; binary built-in default on 🟡) | caps steepness |
-| Random Land (`RANDOM_LAND`) | on/off | off (📘; binary built-in default on 🟡) | randomises the above each round |
-| Percent Scanned Mountains (`MTN_PERCENT`) | 0–100 | 20 | chance of using a `.MTN` picture instead (§17.1) |
+**Earth colours** ✅ `DS:5036`: the six VGA RGB triples are
+`(38,25,17), (54,36,28), (53,53,47), (20,62,20), (9,35,9), (36,54,28)`.
+Ordinary generated dirt is one solid colour per round. Plain sky is VGA
+`(9,9,31)` (`42c2:0336`). Imported mountains retain their own palette.
 
-All 📘 *p. 46*. The generator algorithm itself is not documented here (see §18).
+The native terrain follow-up, binary-instruction oracle and DOSBox comparison
+are documented in `TERRAIN_FOLLOWUP.md`. The tribute adapts graphics bounds to
+its own HUD/full viewport and uses its own RNG. Working landscape sliders
+expose the original class parameters as an enhancement; Classic uses the
+shipped constructor's fixed 20/20/off values. Imported PNG/Cavern clearance is
+also a local extension rather than a recovered scanned-mountain placement rule.
 
 ---
 
@@ -917,15 +954,12 @@ Plain text, **one phrase per line**. A repeated line is said more often. A
 
 ---
 
-## 18. Unknowns
+## 18. Verification notes
 
-Still not fully documented. The plan for researching the first two is in
-`TERRAIN_FOLLOWUP.md`.
+The native terrain call path, vertical bounds, endpoint rule and Cavern
+construction are resolved; see §5.3 and `TERRAIN_FOLLOWUP.md`. Estimates still
+marked 🟡 elsewhere retain their stated verification limits.
 
-- **Terrain end heights and vertical range**: how the caller of the midpoint
-  generator chooses the two end heights and the "mid" that bounds the
-  amplitude, and how the Cavern ceiling's line is made (§5.3).
-- **How the terrain routine is reached**: it is called through a function
-  pointer that wasn't located.
-- **Per-frame drawing speed** of the original. All repeat and animation rates
-  here are upper limits; real 1990s PCs may have been slower.
+**Execution speed:** repeat and animation rates are upper limits. The original
+also depended on the PC's drawing speed, so there is no single per-frame speed
+to recover for every 1990s machine.

@@ -104,13 +104,15 @@ own copy instead.
 
 ### Where things live today
 
-`game.rs` (round/turn flow, world state) · `settings.rs` (session options) ·
+`game.rs` (round/turn flow, world state) · `earth.rs` (tunnels, riot and dirt effects) ·
+`controls.rs` (battlefield panels/accessories) · `shields.rs` (shield state/forces/collisions) ·
+`play.rs` (orders/team outcomes) · `system.rs` (paused System Menu) · `speech.rs` (phrase files) · `liquid.rs` (napalm, heat and flowing dirt) · `movement.rs` (driving and fuel) · `guidance.rs` (targeting, steering and Lazy Boy) · `energy.rs` (plasma bursts and laser beams) · `settings.rs` (session options) · `sound.rs` (generated beeps and playback) ·
 `physics.rs` (shared ballistics, wind and settling rules) ·
-`economy.rs` (cash, interest, awards and ranking) · `shop.rs` (opening purchases) ·
+`economy.rs` (cash, interest, awards and ranking) · `shop.rs` (buying, selling and market prices) ·
 `weapons.rs` (`ITEMS` catalogue, projectiles, impacts, damage law) · `tank.rs`
 (tanks and controllers) · `inventory.rs` (bounded persistent stock) · `ui.rs`
 (menu input, HUD, dialogs, drawing) · `terrain.rs` (pixels, `carve`, `add_dirt`,
-`settle_step`) · `ai.rs` (`plan()`, `sim()`) · `gfx.rs` (drawing primitives).
+`settle_step`) · `ai.rs` (personalities, buying preparation, targeting and private prediction) · `gfx.rs` (drawing primitives).
 
 ---
 
@@ -147,8 +149,7 @@ Things the prototype already has, but does differently from the original:
       weapon's original index per Q1 (Roller ×14, Missile ×2).
 - [x] **Rename our "Cyborg" to "Spoiler"**: perfect aim with wind is what the
       original calls Spoiler *(p. 7)*. The original Cyborg has the same aim plus
-      nasty target choice (batch 16). Our "Shooter" (ignores wind) is only a
-      stand-in until batch 16.
+      nasty target choice (batch 16). Shooter's original-style aiming is implemented in batch 16.
 - [x] Max power = 10 × remaining health, 1000 at full *(p. 9)*. Already correct.
 - [x] The player who goes first is random, then play goes **left to right**
       *(p. 5)*. Cycle living tanks by x position, wrapping at the right edge;
@@ -282,7 +283,7 @@ replace the prototype's `G=200`, `POWER_K=0.45`, and `WIND_K=4`.
 
 The five Physics controls and Landscape's Max. Wind / Changing Wind controls
 are active. Gravity cycles in 0.05 steps; other numeric controls use unit steps
-(PgUp/PgDn = ten steps). Walls remain disabled until batch 4. Impact Damage
+(PgUp/PgDn = ten steps). Walls are implemented in batch 4 below. Impact Damage
 is a TOML-only `physics.impact_damage` setting.
 
 Suspend Dirt is rolled once for each fired shot, including all child warheads
@@ -300,7 +301,7 @@ to 120 seconds so large margins remain useful.
 
 AI simulations use the same projectile step and border rules. Shooter/Spoiler
 intentionally ignore drag; the prototype Shooter also retains its existing
-wind blindness until batch 16. Tests cover physical units and trajectories,
+wind blindness; original-style aiming is implemented in batch 16. Tests cover physical units and trajectories,
 off-screen return, settling probabilities and shot lifetime, fall modes,
 wind rules, enabled menus, and AI predictions.
 
@@ -324,9 +325,46 @@ None → Wrap-around → Padded → Rubber → Spring → Concrete → Random �
 | Random | a type picked at the start of each round | – |
 | Erratic | a new type before each shot | – |
 
-- [ ] Draw the walls as thin lines in those colours at the screen edges.
-- [ ] `ai::sim()` follows the walls (needed for Poolshark, batch 16).
-- [ ] Works for rollers and MIRV warheads too.
+- [x] Draw the walls as thin lines in those colours at the screen edges.
+- [x] `ai::sim()` follows the walls (needed for Poolshark, batch 16).
+- [x] Works for rollers and MIRV warheads too.
+
+**Implemented:** Effect of Walls is active in the Physics menu and cycles in
+the documented order, with reverse cycling and settings persistence. The
+resolved wall type is shared by live projectiles, AI predictions, rendering and
+`u` status. Random picks one of the six fixed types at round setup; Erratic
+picks at turn preparation, before either human firing or AI planning, and
+retains that choice through the shot, child warheads, hops and chain reactions.
+
+Walls are drawn as one-pixel borders in the documented colours. The ceiling
+for Concrete/Padded/Rubber/Spring is the visible playfield's top, below the
+main HUD and optional status bar; side boundaries are x=0 and x=640. None and
+Wrap-around leave the ceiling open. The bottom remains the ordinary terrain/
+floor impact boundary. None alone uses Borders Extend.
+
+The grid-walking projectile step resolves boundary contacts before checking
+the next terrain/tank cell, retaining the time left in the step. Wrap-around
+preserves height, velocity and overshoot, including negative crossings; shots
+immediately check the opposite edge's dirt and tanks. Reflections reverse the
+normal velocity component with factors 0.5 / 1 / 2 and retain the tangential
+component. Concrete cannot be tunneled through and produces an explicit wall
+impact, so a flying roller detonates instead of starting to roll on concrete.
+Pre-apex MIRV/Death's Head wall impacts remain duds.
+
+All three rollers wrap or reverse at the edge. Padded/Spring also adjust their
+rolling tick speed, capped at 1000 pixels/s to keep repeated Spring bounces
+bounded; Concrete detonates them and None lets them leave the field. Split
+warheads and Leap Frog hops use the same active walls. Funky curves use wall
+collisions too: a reflected curve continues as a ballistic child, with its
+final blast still waiting for all children.
+
+**Validation:** tests cover both side walls, ceilings/corners, reflection
+factors, long-step wrap/bounce travel, opposite-edge terrain contact, all
+currently playable weapons, all roller variants and repeated Spring bounces,
+split warheads, Funky curves, concrete impacts/duds, Random/Erratic lifetimes,
+status and HUD ceiling alignment, exact AI/live endpoints, menu cycling and
+border colours. Framebuffer previews cover all six fixed wall types and the
+Physics menu. Interactive play and side-by-side DOSBox checks remain manual.
 
 **Done when:** all types work with every weapon, and the colours match.
 
@@ -365,7 +403,7 @@ layers, buried explosions, strict cutoff, per-pixel slowing, forces, exceptions,
 child settings, menu/config behavior and isolated AI predictions. A framebuffer
 preview checks an explosion centered below the hillside surface.
 
-The per-shot flag provides the override for Contact Triggers in batch 14;
+The per-shot flag supplies the Contact Trigger override implemented in batch 14;
 Napalm's underground fizzle behavior remains part of batch 11.
 
 **Done when:** shots into a hillside visibly explode inside it.
@@ -394,7 +432,7 @@ Economics menu *(pp. 42–43)*:
 **Implemented:** the Economics menu enables Interest Rate, Cash at Start,
 Computers Buy and Basic/Standard/Greedy scoring. Interest changes by 0.01 and
 starting cash by $1,000 per menu step; TOML can specify intermediate values.
-Free Market remains disabled until batch 7.
+Free Market is implemented in batch 7 below.
 
 `economy.rs` uses exact arbitrary-size unsigned integer cash, including integer
 interest at `trunc(rate × 10000)` basis points and an interest-earned total.
@@ -407,7 +445,7 @@ award the same health twice. Enemy kills pay 4000 in Basic or 500 otherwise;
 self kills cost 1500, teammate kills 2000. Basic has no per-damage awards;
 Standard/Greedy use +30 per enemy health point and −15 for self/team damage.
 The scoring helper also supports +2 per enemy shield point for batch 13.
-Team assignment/gameplay remains batch 17; its penalty relationship is ready.
+Team assignment/gameplay is implemented in batch 17; its penalty relationship is shared with scoring.
 Survival pools (players × 1000 or 5000) split with integer truncation and pay
 once; all-dead rounds pay nothing.
 
@@ -421,8 +459,8 @@ Positive starting cash opens a basic purchase screen before round 1. Humans
 can buy affordable complete bundles of the nine implemented weapons (excluding
 unlimited Baby Missiles); computers make bounded starter purchases only when
 Computers Buy is on. Interest on round 1 is paid on cash remaining after these
-purchases. Inter-round shopping, selling, partial bundles, accessories and the
-full shop controls remain batch 7/8; computer buying personalities remain 16.
+purchases. Batch 7 adds inter-round shopping, selling, partial bundles and the full shop
+controls; accessory use remains batch 8 onward, and buying personalities are implemented in batch 16.
 
 Tests exercise ten full scoring rounds per mode, 1000-round interest growth,
 penalties, fall timing, kill/pool payment guards, Greedy ranking, current prices,
@@ -436,29 +474,66 @@ and opening-purchase previews were visually checked.
 
 Buying screen *(pp. 18–21)*:
 
-- [ ] Between rounds, every player with cash shops in turn (computers too, if
+- [x] Between rounds, every player with cash shops in turn (computers too, if
       Computers Buy is on).
-- [ ] Left column: a list of items with icon, name and price per bundle. Two
+- [x] Left column: a list of items with icon, name and price per bundle. Two
       groups: **Weapons** and **Miscellaneous**, switched with Tab.
-- [ ] **Items you can't afford are hidden**, and reappear when you can.
-- [ ] Keys: Up/Down move the marker (wrapping), Home/End jump to the top or
+- [x] **Items you can't afford are hidden**, and reappear when you can.
+- [x] Keys: Up/Down move the marker (wrapping), Home/End jump to the top or
       bottom, PgUp/PgDn change pages (wrapping), **Space buys one bundle**,
       `i` opens your inventory, `u` shows status (rounds left, interest
       earned), Esc = Done.
-- [ ] 99 limit: if a full bundle would go over 99, sell only the rest at about
+- [x] 99 limit: if a full bundle would go over 99, sell only the rest at about
       a 20 % markup per item.
-- [ ] **Selling**: in the inventory, picking an item opens a panel. `q` / 🟡 **Q9**
+- [x] **Selling**: in the inventory, picking an item opens a panel. `q` / 🟡 **Q9**
       Up raises the quantity, Alt-q / Down lowers it; the offer changes
       with the quantity; `a` accepts, `r` or Esc rejects. Usually sells at a
       loss. The offer only changes between rounds.
-- [ ] **Arms Level** 0–4 (Weapons menu, default 4): hides items above that
+- [x] **Arms Level** 0–4 (Weapons menu, default 4): hides items above that
       level.
-- [ ] **Free Market** (default off): prices rise for items people buy and fall
+- [x] **Free Market** (default off): prices rise for items people buy and fall
       for ignored ones, "bouncing" a little. Saved between games (the original
-      used `scorch.mkt`; ours could use `~/.local/share/scorched/market.toml`).
+      used `scorch.mkt`; ours uses `~/.local/share/scorched/market.toml`).
       🟡 **Q10**
-- [ ] **Useless Items** option (default off): hide items that do nothing with
+- [x] **Useless Items** option (default off): hide items that do nothing with
       the current settings, e.g. Smoke Tracer when Trace Paths is on.
+
+**Implemented:** the shop opens before round 1 with positive starting cash and
+between rounds for each player with cash, including players killed in the last
+round. Computers Buy controls bounded AI purchases in both flows; personalities
+are implemented in batch 16. Interest is paid once after shopping, preserving batch 6's
+opening-purchase order. There is no shop after the final round.
+
+The paged Weapons / Miscellaneous lists support wrapping arrows and page keys,
+Home/End, Tab, Space/Enter and mouse purchases. `i` opens the shop inventory,
+where an item opens a quantity-based sale panel; `u` shows rounds left, cash and
+interest earned. Selling uses the round's fixed prices at 80% (65% with Free
+Market), rounded once per item quantity. Unlimited Baby Missiles cannot be
+bought or sold. Partial purchases fill the remaining stock spaces at 120% of
+the unit price, rounded to the nearest dollar, using exact cash arithmetic.
+
+Arms Level, Free Market and Useless Items menu controls are active. Settings
+filters hide redundant Smoke Tracers, parachutes when Tanks Fall is off, Earth
+Disrupters when Suspend Dirt is zero and Contact Triggers when tunneling is
+off. Useless Items enables those offers. All catalogue items can be stored and
+sold; items awaiting later weapon/accessory batches are identified in the shop
+as having their effect in a later batch. Their battlefield use remains gated.
+
+Free Market tracks bundle purchases, applies Q10's recurrence once per completed
+round using the Interest Rate, and keeps quotes fixed during each shopping
+phase. Prices are bounded to $1–$4,294,967,295 per bundle. Prices, demand, ratio
+and pending purchase counts are saved atomically to the platform's local data
+directory (`~/.local/share/scorched/market.toml` on Linux). Invalid files report
+an error and use base prices; failed writes report an error while preserving
+in-memory changes. With Free Market off, base prices apply and the saved market
+is left alone. Auto Defense's annuity pricing is implemented in batch 13 below.
+
+**Validation:** tests cover a ten-round shop/round sequence, dead/cashless players,
+Computers Buy, interest timing, partial bundles and stock caps, exact cash,
+selling/rejection, affordability after selling, both category filters, page and
+quantity controls, Free Market formulas and persistence/error handling.
+Framebuffer previews cover buying pages, miscellaneous items, inventory,
+selling and status. Interactive play and DOSBox comparison remain manual checks.
 
 **Done when:** a 10-round game with shopping plays smoothly.
 
@@ -467,29 +542,64 @@ Buying screen *(pp. 18–21)*:
 
 How you use accessories during your turn *(pp. 10–17)*:
 
-- [ ] **`t` opens the Tank Control Panel** (a dialog): batteries, parachutes
+- [x] **`t` opens the Tank Control Panel** (a dialog): batteries, parachutes
       (state and threshold), shields (select and engage), triggers, guidance,
       fuel. Items you don't own are greyed out.
-- [ ] **`i` opens the Inventory Panel**: icons of everything you own. Picking
+- [x] **`i` opens the Inventory Panel**: icons of everything you own. Picking
       one does the "obvious" thing: selects a weapon, energises a shield,
       toggles parachutes or triggers, selects guidance, uses a battery, or opens
       fuel/movement.
-- [ ] **Status Bar** option (Play Options, default off): a second HUD line,
+- [x] **Status Bar** option (Play Options, default off): a second HUD line,
       `Max: 1000  n[batt]  n[para]  n[shield] %  n[guid]  n[trig]  n[fuel]`,
       with keys `b` battery, `p` parachute toggle, `s` select shield, `e` engage
       shield, `g` guidance, `f` fuel, `-` trigger.
-- [ ] **Parachutes** *(p. 31)*: before a fall, estimate the damage. If ✅ **Q2**
+- [x] **Parachutes** *(p. 31)*: before a fall, estimate the damage. If ✅ **Q2**
       parachutes are **deployed** and the damage would be **more than the
       safety threshold** (default 5, range 1–100, `v` in the panel), use one and
       take no fall damage (unless you land on an enemy tank). Passive parachutes
       do nothing. Default: deployed.
-- [ ] **Battery** *(pp. 14, 31)*: +10 health (capped at 100), which raises max
+- [x] **Battery** *(pp. 14, 31)*: +10 health (capped at 100), which raises max
       power. Batteries also power energy weapons (batch 12).
-- [ ] Other in-game keys *(pp. 12)*: `u` status (wall type, rounds left),
+- [x] Other in-game keys *(pp. 12)*: `u` status (wall type, rounds left),
       `k` "No kibitzing, please." box, `1`–`9`/`0` info on tank N counted from
       the left, `r` **retreat** (confirm, then you escape in a helicopter while
       your tank blows up behind you: you get no points, but the enemy doesn't
       get points for killing you either).
+
+**Implemented:** `controls.rs` owns modal Tank Control / Inventory panels,
+shared accessory actions, threshold editing, information/status dialogs and
+retreat confirmation. The same battery/parachute actions work from hotkeys,
+panel rows, inventory and clickable status-bar fields. Owned inventory pages
+wrap with arrows and PgUp/PgDn, with Home/End and mouse selection. Missing
+supplies are greyed out in the control panel. Panels consume input and pause
+aiming; closing one with Enter/Space cannot fire a shot. Panel key repeat is
+independent of aiming's original timer rates.
+
+The Play Options Status Bar control is active and saved with settings. The
+second HUD row shows max power and supply counts/state, and wind moves below
+it. Batch 13 now supplies active shield percentages and engagement.
+
+Batteries heal 10 health up to 100 without being wasted at full health or on a
+dead tank; the power ceiling rises without changing the chosen firing power.
+Parachutes default to deployed, threshold 5. The `v` editor accepts 1–100,
+with typing/arrows, Backspace, Enter to apply and Esc to cancel. Before a fall,
+the game predicts the drop and consumes one chute only when deployed, stocked
+and the predicted damage is strictly above the threshold. An open chute takes
+20 ms per pixel independently of Falling Delay, prevents normal fall damage
+in both damage modes, and is drawn over the falling tank. Landing on an enemy
+still deals 2 × drop + 50 to the victim and drop + 10 to the faller. Damage
+credit uses actual health lost. Round boundaries clear descent state while
+keeping deployment/threshold preferences; new games reset them.
+
+**Accessory implementation:** shield selection and physics are completed in
+batch 13; guidance/trigger firing and consumption in batch 14; movement and
+fuel consumption in batch 15. Inventory use of weapons still awaiting their
+own batch reports that batch instead of consuming the item.
+
+**Validation:** tests exercise shared panel/inventory/status actions, modal
+input, battery limits, parachute deployment/threshold and timing, fall damage
+and landing attribution, round preference persistence, retreat and framebuffer
+rendering. Interactive play remains a manual check.
 
 **Done when:** all accessory controls work from both the panel and the status bar.
 
@@ -514,13 +624,65 @@ From the weapons table *(pp. 23–25)*:
 | Roller | $6,000/5 | 20 | 2 | |
 | Heavy Roller | $6,750/2 | 45 | 3 | |
 
-- [ ] Add the missing ones: Leap Frog, Death's Head, Smoke Tracer, Baby Roller,
+- [x] Add the missing ones: Leap Frog, Death's Head, Smoke Tracer, Baby Roller,
       Heavy Roller.
-- [ ] **Trace Paths** option (Weapons menu, default off): every shot leaves a
+- [x] **Trace Paths** option (Weapons menu, default off): every shot leaves a
       trail in the owner's colour until cleared from the System Menu
       (batch 17).
-- [ ] **Bomb icon** option: Invisible / Small / Big (default Big).
-- [ ] **Scale** option: Normal / Medium / Large, making all blasts bigger. 🟡 **Q25**
+- [x] **Bomb icon** option: Invisible / Small / Big (default Big).
+- [x] **Scale** option: Normal / Medium / Large, making all blasts bigger. 🟡 **Q25**
+
+**Implemented:** Leap Frog, Death's Head, Smoke Tracer, Baby Roller and Heavy
+Roller now have usable behaviours and can be bought, selected from inventory
+or the weapon cycle, and fired at the catalogue's existing prices/bundle sizes.
+Future weapons remain guarded. Basic AI can choose held Leap Frogs and the
+new heavy/roller weapons; its self-blast distance guard now includes Scale.
+Buying personalities and weapon-specific aim are implemented in batch 16.
+
+Leap Frog queues each hop only after the previous blast finishes and carves
+its crater: radii 30 → 25 → 20, speed divided by 1.5 per hop, with upward
+relaunch and the original weapon damage index. MIRV produces five Missile
+warheads; Death's Head produces nine radius-35 warheads with its original
+damage index. Both preserve the central projectile's position, velocity,
+age, owner, tunneling and scale; before-apex impacts remain harmless duds.
+
+Funky Bomb's old six ballistic bomblets are replaced by a radius-20 opening
+burst, 5–10 coloured curved trails aimed within −80…+79 pixels and clipped to
+the field, radius-15…24 landing bursts, then a final radius-40 × Scale blast.
+Trails stop at dirt/tanks/edges and do not tunnel. The opening blast carves
+before trails launch, and the final blast waits for all trails/landing bursts.
+The turn waits for the entire reaction; all stages use one fired item.
+
+All three rollers choose the downhill direction, move/fall one pixel per
+150 Hz rolling tick and detonate at an uphill obstruction/valley or tank,
+including their owner. Their blast radii are 10/20/45, with original damage
+indices. Walls are implemented in batch 4; shield contact/rolling off shields
+is implemented in batch 13 below.
+
+Weapons menu Bomb Icon, Scale and Trace Paths controls are enabled and persist
+in settings. Invisible draws no shot icon, Small is one pixel, Big is a small
+bomb with a fuse. Scale is snapshotted per shot: Normal/Medium/Large = 1/2/3
+for missiles, Leap Frog, MIRV/Death's Head and rollers. Dirt spheres and Funky's
+opening/trail bursts retain their fixed radii; its final burst scales. This
+makes the currently implemented family's scaling policy explicit; the sources
+only establish some family-specific exceptions (Q25), so exact DOSBox fidelity
+of the remaining family choices is still a manual research check.
+
+Trace Paths retains owner-coloured paths in a bounded framebuffer-sized pixel
+layer. Smoke Tracer persists independently of that option; ordinary Tracer and
+Funky effects have temporary paths for the current shot. With Trace Paths off,
+ordinary ammunition leaves no path. Both tracers cause no damage or terrain
+changes. New shots clear temporary effects, while round setup clears all paths.
+The shared clear action is wired to the System Menu in batch 17.
+
+**Validation:** tests cover shop/use/fire integration for all five new weapons,
+MIRV/Death's Head counts, central trajectories, damage indices and duds, ordered
+Leap Frog hops, complete chain-to-next-turn flow, Funky's ranges and final-blast
+guard, roller descent/obstruction/owner collisions, scale inheritance, harmless
+tracers, trace persistence/clearing/owner colours, active menu options and all
+three bomb icons. Framebuffer previews cover Funky trails, Death's Head,
+Smoke Tracer, a scaled blast and the icon modes. Interactive play and side-by-side
+DOSBox checks remain manual validation.
 
 **Done when:** all of these are in the shop with the right prices.
 
@@ -547,9 +709,62 @@ From the tables *(pp. 23, 26–27)*:
 | Dirt Charge | $5,000/5 | – | 1 | blows a **wedge-shaped cloud of dirt** into the air (like Riot Charge, but adds dirt) 🟡 **Q13** |
 | Earth Disrupter | $5,000/10 | – | 0 | makes all floating dirt fall; only useful when Suspend Dirt > 0 |
 
-- [ ] **Extra Dirt** option (Weapons menu, default off): Dirt Charges let out 🟡 **Q13**
+- [x] **Extra Dirt** option (Weapons menu, default off): Dirt Charges let out 🟡 **Q13**
       much more dirt.
-- [ ] Earth-destroying weapons hurt tanks only through **fall damage**.
+- [x] Riot weapons and diggers hurt tanks only through **fall damage**.
+      Sandhogs additionally use their documented terminal charges/contact chip.
+
+**Implemented:** all fourteen previously unavailable items in this batch are
+buyable, selectable and usable at their catalogue prices/bundles/arms levels.
+`earth.rs` owns animated erosion, branching tunnel heads, dirt grains and the
+Earth Disrupter pulse. These effects keep the shot resolving until complete;
+normal settling then follows the shot's Suspend Dirt choice. Extra Dirt is
+active in the Weapons menu and persists with settings.
+
+Riot Charge/Blast consume one item and remove a turret-centred wedge immediately,
+without launching a projectile: radius 36/60, half-angle 45°/60°, directed by
+the barrel. Riot Bomb/Heavy Riot Bomb remove radius-30/45 circles on impact.
+These weapons never use direct-hit kills or explosive health damage; only
+subsequent falls hurt tanks, credited to the action's owner. Diggers similarly
+fizzle on direct tank hits and excavate without explosive damage.
+
+Digger births are bounded to 20/40/70; Sandhogs to 10/20/35. At most 20 heads
+are live per swarm, branching every eight ticks, with headings reconsidered
+at twenty-step intervals. Heads choose neighbouring soil, never targets.
+Sandhogs chip 10 on direct contact and finish with radius-10 × Scale charges,
+using the documented rounded radial damage and original weapon index. Their
+underground damage has a separate `Damage::Sandhog` type for the shield-bypass
+contract; batch 13's regression checks now validate that these charges bypass
+an engaged Super Mag and can kill its owner from below.
+
+Dirt Clod/Ball/Ton of Dirt grow fixed radius-20/35/70 spheres. They deposit
+terrain as they grow without lifting tanks or causing direct health damage.
+Dirt Charge follows a normal contact trajectory, then sprays upward dirt
+grains that land and deposit soil, respecting the active walls. Extra Dirt
+emits four times as many grains. Earth Disrupter runs a 100-tick flash sequence,
+marks all terrain for collapse and overrides Suspend Dirt for that action,
+even at 100. It gives no direct damage or points; PC-speaker audio is now supplied by batch 20.
+
+**Explicit approximations where the sources remain incomplete:** tunnel heads
+run at 120 Hz, clear a radius-one corridor in two-pixel steps and expire after
+120 steps; births can end early if no soil is reachable. Dirt Charge uses
+80 grains, or 320 with Extra Dirt, each depositing a radius-two patch. Launch
+heights range from 1/12 to 1/3 of screen height before drag/wind, with an
+eight-second lifetime and a bounded speed for reflected grains. Those particle
+counts, tunnel timing/width/lifetime, and exact Extra Dirt multiplier are local
+policies, not recovered original constants. Riot and dirt-sphere radii remain
+unscaled; Sandhog terminal charges scale. Further DOSBox comparison can refine
+these choices without changing the bounded effect lifecycle.
+
+**Validation:** tests cover wedge geometry and buried-tank escape, all new
+shop/inventory/fire paths, harmless riot/digger contact, actual fall-damage
+credit, digger fizzles, head/birth bounds, finite effect completion, Sandhog
+contact/terminal damage, growing non-lifting spheres, Extra Dirt quantity and
+deposition, extreme-gravity/wind spray under every fixed wall, Disrupter's
+forced collapse at Suspend Dirt 100, menu persistence and turn advancement.
+Framebuffer previews cover wedges, riot circles, diggers, Sandhogs, normal and
+extra dirt spray, dirt spheres and disruption flashes. Interactive play and
+DOSBox fidelity checks remain manual validation.
 
 **Done when:** a buried tank can dig itself out, and sandhogs can kill a
 shielded tank from below.
@@ -563,13 +778,71 @@ shielded tank from below.
 | Hot Napalm | $20,000/2 | 4 | much hotter and stronger |
 | Liquid Dirt | $5,000/10 | 2 | oozes out, fills holes and smooths terrain (clears a path for Rollers) |
 
-- [ ] A small liquid simulation (new `liquid.rs`): particles or cells that flow
+- [x] A small liquid simulation (new `liquid.rs`): particles or cells that flow
       downhill and pool.
-- [ ] Napalm damage depends on pool depth. Shields don't protect you from your 🟡 **Q14**
+- [x] Napalm damage depends on pool depth. Shields don't protect you from your 🟡 **Q14**
       own napalm's heat, though they do protect you from other players'
       secondary damage *(p. 31)*.
-- [ ] With Tunneling on, napalm that burrows into dirt can **fizzle**
+- [x] With Tunneling on, napalm that burrows into dirt can **fizzle**
       *(p. 24)*. Contact Triggers prevent that.
+
+**Implemented:** all three weapons are buyable, selectable and usable at their
+catalogue prices/bundles/arms levels. `liquid.rs` owns a deterministic pixel
+fluid shared by all three. Napalm has 15 emitters; Hot Napalm and Liquid Dirt
+have 20. Across active pools there are at most 100 queued fluid cells. Cells
+fall, flow diagonally and follow short level runs toward a lower ledge; fluid
+occupancy makes them spread and pool rather than pass through each other.
+
+Napalm pools settle and grow flames, then run exactly 50 burn cycles. Heat is
+summed per emitter, increasing with its fluid-column depth; Hot Napalm emits
+more fluid and deals twice the per-emitter heat with taller flames. Enemy
+shields absorb heat before overflow reaches health. Damage uses actual health
+removed, normal self/team/enemy scoring and kill attribution. Burning itself
+neither carves terrain nor creates a standard blast. Death blasts still use
+the normal death pipeline after all liquid effects finish.
+
+**Source discrepancy:** this batch explicitly requests that your own napalm
+heat bypass your shield, while MECHANICS §8.3 says the original absorbs own
+secondary heat. Implementation follows this batch's own-heat bypass requirement;
+the original behavior still needs DOSBox verification. Regression tests make
+the chosen rule explicit rather than silently changing the mechanics notes.
+
+Liquid Dirt deposits one pixel whenever a fluid cell comes to rest, filling
+holes without direct health damage or lifting tanks. Deposited soil participates
+in normal terrain support and post-shot settling. Projectile contacts route
+straight to the liquid system, with no direct-hit kill or ordinary explosion.
+The existing guidance, walls and shield interception still govern the carrier.
+A Napalm/Hot Napalm carrier that stops underground with tunneling enabled
+fizzles; an armed Contact Trigger or non-ballistic guidance prevents entry into
+soil. A carrier that traverses a thin layer and emerges may still spill.
+
+The turn waits for emission, flow, growth and all burn cycles before settling
+terrain and advancing. Round setup clears liquids. Splash, burning and dirt
+sounds use the existing bounded, non-blocking PC-speaker scheduler.
+
+**Explicit local tuning pending DOSBox comparison:** fluid steps at 120 Hz;
+each source emits every four steps, with 32/48/64 pixels per emitter for
+Napalm/Hot Napalm/Liquid Dirt. Sources span 28/38 pixels around impact. Level
+flow looks ahead up to eight pixels. Transport expires after ten simulated
+seconds; any unsettled Liquid Dirt remainder then dissipates. Flames grow for
+eight cycles, followed by 50 damage cycles at 20 Hz. Per-emitter heat is
+`min(6, ceil(depth/4))`, doubled for Hot Napalm, with a bounded depth-based
+reach. Fluid flow ignores wind/viscosity; edge flow wraps only with Wrap,
+otherwise it is contained. Eight concurrent pools and emitter budgets bound
+storage. Fluid volume, timings, heat formula, flame geometry, colours, sounds
+and deterministic underground fizzle policy are local choices, not recovered
+original constants. Liquids do not use explosion Scale.
+
+**Validation:** tests cover valley flow/pooling/depth and all 50 burn cycles,
+Hot Napalm's stronger heat/volume, per-emitter accumulation, own-shield bypass,
+enemy absorption/overflow, harmless non-lifting Liquid Dirt fill, fixed-step
+frame-size equivalence, queue/storage/field limits under all wall types,
+finite fast-forward completion, real purchase/selection/fire/impact/turn flow,
+actual damage/kill/self-damage/suicide awards, direct-contact harmlessness,
+shield carrier interception and live tunneling fizzle prevention with triggers
+and Heat Guidance. `SCORCHED_LIQUID_PREVIEW_DIR` with `cargo test liquid_previews`
+exports splash, pool, burn and filled-hole framebuffer scenes. Interactive play
+and DOSBox comparison remain manual validation.
 
 **Done when:** napalm in a valley pools and burns the tank sitting there.
 
@@ -579,12 +852,52 @@ shielded tank from below.
 *(pp. 23, 27)*. Energy weapons use **batteries**: after firing you choose how
 many to spend (keys 0–9); no batteries means a weak or no effect.
 
-- [ ] **Plasma Blast** ($9,000/5, radius 10–75 depending on batteries, arms 3): 🟡 **Q15**
+- [x] **Plasma Blast** ($9,000/5, radius 10–75 depending on batteries, arms 3): 🟡 **Q15**
       radiation all around your tank, hitting neighbours. The turret angle
       doesn't matter.
-- [ ] **Laser** ($5,000/5, arms 2): a straight beam along the barrel that 🟡 **Q15**
+- [x] **Laser** ($5,000/5, arms 2): a straight beam along the barrel that 🟡 **Q15**
       cuts through mountains, **shields**, and anything else in its way.
-- [ ] Guidance doesn't work with Plasma Blast *(p. 29)*.
+- [x] Guidance doesn't work with Plasma Blast *(p. 29)*.
+
+**Implemented:** both energy weapons are buyable and selectable. Space/Enter
+opens "Batteries to discharge:" before spending ammunition. Type 0–10 or use
+arrows; Enter/Space confirms, Esc returns to aiming without spending anything,
+and Backspace restores the default (up to ten owned batteries). The charge is
+clamped to available stock. Confirmation consumes one weapon and the selected
+batteries, preserving guidance and Contact Triggers. AI discharge uses up to ten
+owned batteries without opening a prompt; choosing energy weapons intelligently
+is implemented by batch 16's AI strategy.
+
+Plasma radiates from the owner's tank, excludes its owner, ignores the turret
+angle and terrain, and never carves dirt. Radius interpolates from Missile 20
+to Nuke 75 over zero to ten batteries (the table/manual's lower value 10 is not
+used; Q15 and MECHANICS §7.3 identify the Missile radius). Enemy shields absorb
+first with overflow to health. It uses the standard weapon-index damage law.
+
+Laser traces the barrel direction in one-pixel samples, spending 40 energy per
+sky pixel and 80 per dirt pixel, making narrow cuts and applying 10-point pulses
+to encountered shield/body pixels. Regular shields drain and can be pierced;
+Super Mag stops the beam and converts its remainder to charge capped at 200,
+without awarding damage money. The owner's shield is excluded. Both effects
+feed actual damage into the normal economy/death pipeline, have generated sound
+cues and bounded visuals, and hold the turn until the animation finishes.
+
+**Explicit local policies pending DOSBox comparison:** laser starts with
+`power × batteries` energy (zero batteries gives no beam), one-point dirt cuts,
+one pulse per sampled shield/body pixel, and converts remaining energy at
+40 energy per shield point. Plasma's radius interpolation, use of the normal
+damage multiplier, 0.5-second rings and the laser's 0.3-second visual are local
+choices; energy weapons do not scale, bounce or wrap. Generated sounds are
+approximations. These tuning details are not claimed as recovered constants.
+
+**Validation:** regression tests cover purchase/selection/fire, cancellable and
+stock-limited battery input including zero/ten, guidance/trigger preservation,
+AI discharge, charge/power/dirt-dependent reach, owner exclusion, plasma's
+unchanged terrain and shield overflow, laser pulses/penetration, Super Mag
+conversion/cap, field bounds, actual damage awards and completed turn flow.
+Framebuffer previews are available with `SCORCHED_ENERGY_PREVIEW_DIR` and
+`cargo test energy_previews`. Interactive play and DOSBox comparison remain
+manual checks.
 
 **Done when:** both are usable and their strength depends on the batteries spent.
 
@@ -604,13 +917,72 @@ HUD.
 | Super Mag | $40,000/2 | 4 | strongest; **immune to lasers**; also has the Mag Deflector push and Force Shield bounce ✅ **Q16** |
 | Auto Defense | $1,500/1 | 3 | lasts the whole game: at each round start you get the Tank Control Panel's defensive options before the fighting begins. Price depends on rounds left and the interest rate ✅ **Q8** |
 
-- [ ] **Your own shield never protects you from your own shot**. Fire straight
+- [x] **Your own shield never protects you from your own shot**. Fire straight
       up with no wind and you die, and lose points.
-- [ ] "Shield failures" for lesser shields ✅ **Q16**: per the reverse
+- [x] "Shield failures" for lesser shields ✅ **Q16**: per the reverse
       engineering there is **no random failure**. A shield simply collapses when
       a hit is bigger than its remaining strength, and the rest of the damage
       goes to the tank.
-- [ ] Draw shields as a circle around the tank that flickers when hit.
+- [x] Draw shields as a circle around the tank that flickers when hit.
+
+**Implemented:** `shields.rs` centralises the five original shield specifications,
+active strength, colours, magnetic force, interception/reflection and drawing.
+Mag/Shield/Force/Heavy/Super Mag start with 55/100/100/150/200 points and outline
+radii 16/15/15/16/16. `s` selects owned types plus None; `e` consumes one selected
+shield to engage/replace it. Inventory selection engages that specific type.
+Replacement never returns the old item; missing stock leaves the active shield
+alone. Active shields are cleared at round setup, while unused stock persists.
+
+Direct enemy hits stop at a plain/Heavy/Mag shield for a 10-point chip and no
+explosion or follow-up reaction. Force/Super Mag reflect by the mirror-normal
+formula at 70% speed, costing rounded incoming speed/100. Costs award points
+only for actual shield strength removed; direct chips/reflection costs never
+overflow into health. Blasts absorb available strength, then overflow to tank
+health. Enemy shield damage earns +2 per point in Standard/Greedy, with existing
+Basic and friendly-fire rules preserved. There are no random failures.
+
+Own projectiles ignore the owner's shield and magnetic field; own weapon
+blasts bypass absorption too. Falls and underground Sandhog damage bypass all
+shields. All three rollers traverse an enemy shield outline downhill and drop
+off its side without chipping it. Funky direct interception creates no chain;
+reflected MIRV/Death's Head carriers still split when reflection forms an apex.
+AI prediction uses the same contacts/forces with privately cloned shield
+strength, leaving live tanks unchanged.
+
+Mag/Super Mag affect non-owner airborne shots with horizontal velocity within
+±15 pixels and up to (height−1)/4 above the tank, with no speed cutoff. The
+fixed-step implementation translates the recovered reciprocal-step force to
+2500 pixels/s² upward acceleration; this normalization needs exact side-by-side
+DOSBox tuning, while keeping trajectories independent of animation delay.
+Super Mag also has Force reflection and the laser-immunity property ready for
+batch 12; actual laser energy conversion is integrated with that future weapon.
+The 1000 Hz hit beep is now supplied by the PC-speaker audio batch 20.
+
+Shield circles fade using integer VGA-channel strength scaling and flicker on
+hits. Remaining percentage appears in both the main HUD (even with Status Bar
+off) and the status row; the control panel shows active type/percentage.
+
+Auto Defense is a one-token whole-game entitlement: the shop hides repeat
+purchases, and using it does not consume it. Price uses the current fixed/market
+base times `((1+r) − (1+r)^−rounds_left) / r`, with the zero-rate limit
+`base × (rounds_left + 1)`. Quotes round to the nearest dollar, remain bounded
+by the market's u32 price ceiling, and are recomputed from the raw base instead
+of compounding an adjusted price. Selling the token removes the entitlement.
+Before each round, human owners receive a defensive-only control/inventory
+phase; no offensive actions, movement or retreat are available. Setup visits
+each owner before the previously chosen first shooter begins. Computer owners
+use their best held shield under a bounded starter policy; full AI accessory
+strategy is implemented in batch 16.
+
+**Validation:** tests cover the full specification table, replacement/stock,
+direct chips, reflection geometry/speed/cost, shield-only scoring and overflow,
+Basic scoring, own returning shots and penalties, magnetic bands and slow/fast
+shots, no random failure, private AI predictions, roller traversal, a complete
+nearby Leap Frog chain, nuke overflow, Sandhog/fall bypass, HUD percentages,
+VGA fading/flicker, annuity limits and quotes, purchase-once ownership and
+human/computer multi-round defensive setup. Framebuffer previews cover all
+shield types, partial strength, hit flash and Auto Defense panels. Interactive
+play and exact DOSBox comparison remain manual checks.
 
 **Done when:** each shield behaves differently, and a Leap Frog or a nearby
 nuke beats a plain Shield (the manual's strategy tip, *p. 32*).
@@ -623,7 +995,7 @@ nuke beats a plain Shield (the manual's strategy tip, *p. 32*).
 can't be guided (MIRV, Death's Head, Riot Charge, Riot Blast, Plasma Blast)
 leave the guidance unused and not used up.
 
-- [ ] **Choose target** prompt, after Space, for guidance that needs it: press
+- [x] **Choose target** prompt, after Space, for guidance that needs it: press
       `1`–`9`/`0` (tanks counted from the left), or click any point with the
       mouse (right click = nearest tank).
 
@@ -636,6 +1008,62 @@ leave the guidance unused and not used up.
 | Lazy Boy (L) | $20,000/2 | 3 | choose a target and it's hit; explodes **exactly where you clicked**, and early if it hits a different tank |
 | Contact Trigger | $1,000/25 | 3 | the shot explodes on first contact (tunneling off for that shot); **one trigger covers all warheads** of a MIRV etc. Toggle with `-` or in the panel |
 
+**Implemented:** `guidance.rs` owns target selection helpers, the wind-aware
+ballistic solver and per-projectile steering state. `g`/Alt-g cycles owned
+guidance as before. Ballistic, Horizontal, Vertical and Lazy Boy open a
+"Choose Target" phase before any ammo/accessory is spent. Digits select tank
+positions from the left (0 is tenth); eliminated positions keep their numbers
+but cannot be selected. Left click chooses any battlefield point; right click
+chooses the nearest living tank base within 100 pixels. The existing viewport
+mapping handles scaled/letterboxed windows. Esc returns to aiming with stock,
+settings and the active wall choice intact. Weather pauses during the prompt.
+
+Launch consumes one applicable guidance item and resets selection to None.
+Heat needs no prompt: it locks onto the first live non-owner tank within 40
+pixels, including teammates, tracks it beyond lock range and reacquires if it
+dies. Ballistic uses the current barrel direction and wind/gravity to solve
+power, ignores viscosity and clamps impossible shots to health-limited power.
+Horizontal engages at the target row; Vertical at the target column. They then
+steer along that axis and detonate at the exact selected point. Steering uses
+the recovered 10000/15000 constants and small-distance guard. All ordinary
+flight still uses the shared pixel/wall/shield collision code.
+
+Lazy Boy travels directly toward the point at 500 pixels/s, excavating a narrow
+path without drag, gravity, wind or shield interception/magnetic push. It reaches
+the exact clicked point (including inside the chosen tank), but a different
+tank causes an early impact. It feeds the normal weapon impact, scoring and
+death pipeline. Guidance ends when a shot becomes a roller, shield traversal,
+Leap Frog follow-up or Funky child effect. MIRV/Death's Head and immediate riot
+weapons preserve guidance; non-projectile energy weapons and Earth Disrupter
+also preserve it under the current implementation's projectile-only policy.
+AI launch can choose a live target without a human prompt; full accessory
+selection strategy is implemented in batch 16.
+
+An armed Contact Trigger consumes one item per unguided/Ballistic projectile
+shot and snapshots tunneling off. Children and hops inherit that flag without
+spending more stock. Exhaustion disarms triggers; subsequent shots return to
+the configured tunneling rule. Non-ballistic guidance already forces contact
+and does not spend a trigger. Immediate/energy effects do not spend triggers.
+
+**Local policies pending DOSBox comparison:** Horizontal/Vertical activation
+uses a one-pixel/crossed-axis test and suppresses air forces after engagement
+so the final leg stays aligned. Lazy Boy uses a straight digging route rather
+than an unrecovered obstacle-routing routine; its one-pixel corridor, intended
+tank arrival handling and field-boundary cutoff are explicit local choices.
+Ballistic's analytic solver ignores walls, intervening dirt and shields; it
+solves the requested angle, not a different route. Exact original trajectories
+and compatibility of guidance with non-projectile effects remain research.
+
+**Validation:** tests cover wind/drag/impossible ballistic solutions, heat lock
+ordering/range/team inclusion/reacquisition, axis engagement and exact midair
+arrival, Lazy Boy soil/shield bypass, early tank contact and exact chosen-tank
+arrival, prompt cancellation/invalid choices, keyboard/mouse/tenth-tank mapping,
+consumption/reset/exclusions, real first-contact soil collision, all MIRV child
+flags, return to normal tunneling, trigger preservation under guidance and
+completed live damage/death/turn flow. `SCORCHED_GUIDANCE_PREVIEW_DIR` with
+`cargo test guidance_previews` exports the targeting prompt and all five paths.
+Interactive play and side-by-side DOSBox checks remain manual validation.
+
 **Done when:** each guidance type visibly changes the shot's path.
 
 ## Batch 15 – Fuel, movement, tank icons (M)
@@ -643,16 +1071,68 @@ leave the guidance unused and not used up.
 
 *(pp. 8, 16, 32)*
 
-- [ ] **Fuel Tank** ($10,000/10, arms 3): each one gives 10 fuel. `f` opens the ✅ **Q18**
+- [x] **Fuel Tank** ($10,000/10, arms 3): each one gives 10 fuel. `f` opens the ✅ **Q18**
       move panel; Left/Right move one pixel per fuel unit, **more on uphill
       slopes**. Hills that are too steep can't be climbed; going down too steep
       a slope makes you **slip and fall** (normal fall damage), and the turn
       goes back to aiming. Esc ends moving.
-- [ ] **Tank icon choice** in player setup: several tank shapes. Icons
+- [x] **Tank icon choice** in player setup: several tank shapes. Icons
       **without wheels or treads are fixed emplacements**: they can't buy or
       use fuel.
-- [ ] **Triple-turreted tank** (registered version and computers only in the
+- [x] **Triple-turreted tank** (registered version and computers only in the
       original): fires 3 shots at a time with Missiles or Baby Missiles.
+
+**Implemented:** `movement.rs` validates one-pixel driving steps before spending
+fuel. `f`, the control panel, battlefield fuel inventory and the clickable fuel
+status field all open the Move panel. Left/Right repeats through the shared
+menu-key timing. Esc/D returns to aiming; Space/Enter never fires from Move.
+Each Fuel Tank contributes ten units: unopened tanks remain in inventory and
+only the opened tank's remainder (0–9 units) is stored in equipment. The status
+bar, inventory fuel row and Move panel show units available. Unopened stock
+and the remainder carry between rounds; a new game resets them.
+
+Each step costs one unit plus its 1–3 pixel uphill rise. A four-pixel obstacle,
+insufficient fuel, another live tank or a field edge blocks movement without
+spending stock. Downhill drops up to three pixels are free beyond the step's
+one-unit cost. Larger drops enter the normal fall/parachute animation; damage,
+landing collisions, attribution and death chains use the existing rules. A
+surviving driver returns to aiming with the same turn and wall choice, including
+when another tank dies. Exhausted fuel closes Move. Tanks Fall off retains the
+existing no-fall behavior. Weather and aiming are paused during movement.
+
+Player Setup has seven drawn silhouettes: Wheels, Treads (the existing default),
+Heavy, Bunker, Tower, Dish and Triple. Tab changes the selected player's shape;
+Alt reverses; clicking the shape at the right also cycles it. Existing arrows
+and number hotkeys still change controllers. Shapes are saved with settings and
+used when new tanks are created. Bunker/Tower/Dish are fixed: all purchase paths
+reject fuel even with Useless Items on, and all movement paths reject them.
+Triple is available only to computers; changing to Human resets it to Treads,
+and invalid human/triple configurations are rejected on load/save.
+
+Triple fires three simultaneous Baby Missiles or Missiles, sharing one weapon
+item, one applicable guidance item and one armed trigger. All three inherit the
+shot's tunneling/guidance state. Other weapons remain single shots; normal shot
+resolution waits for every projectile and its effects.
+
+**Local presentation/geometry choices pending DOSBox comparison:** the seven
+silhouettes are original drawings, not recovered icon bitmaps. All retain the
+existing 15×11 collision envelope. Driving uses footprint clearance and contact
+at any supporting wheel/track pixel; ordinary three-pixel support settling
+resumes on exit. This avoids treating the first pixel of an uphill step as a
+slip. Triple's ±5° fan and one-ammo-per-volley policy are explicit local choices;
+the sources only establish that it fires three shots. AI driving decisions
+are implemented in batch 16's accessory strategy.
+
+**Validation:** tests cover flat/reverse driving and opened-tank accounting,
+uphill costs and four-pixel blocks, downhill steps/slips, insufficient fuel,
+field/tank collisions, crater escape without terrain edits, all four movement
+entry paths, fixed fuel restrictions, retained turns/stock/walls, parachutes,
+lethal falls and a surviving driver's return after a landing kill, stock/shape
+persistence, controller/shape cycling and settings validation, triple projectile
+counts/spread and shared ammo/trigger spending. `SCORCHED_MOVEMENT_PREVIEW_DIR`
+with `cargo test movement_and_shape_previews` exports the seven silhouettes,
+ten-player setup, Move panel and triple volley. Interactive play and DOSBox
+comparison remain manual checks.
 
 **Done when:** you can drive out of a crater, and fixed emplacements can't move.
 
@@ -673,11 +1153,87 @@ Spoiler and Shooter wrong.
 | Cyborg | Spoiler's aim plus nasty targeting: goes for tanks that are **weakened, winning, or attacked it** before 🟡 **Q19** |
 | Unknown | a random type, **kept secret** from the players |
 
-- [ ] Rework `ai.rs` into these 8 types. Tosser needs memory of its last shot
+- [x] Rework `ai.rs` into these 8 types. Tosser needs memory of its last shot
       per target.
-- [ ] The computer **picks its own name**, never the same as a human's *(p. 7)*.
-- [ ] Buying (if Computers Buy is on) and using items: shields, parachutes,
+- [x] The computer **picks its own name**, never the same as a human's *(p. 7)*.
+- [x] Buying (if Computers Buy is on) and using items: shields, parachutes,
       batteries, Riot Charge to dig out. 🟡 **Q20**
+
+**Implemented:** all eight types are selectable and saved through Player Setup.
+`ai.rs` now owns target/method selection, bounded private trajectory prediction,
+per-target ranging state, hidden Unknown resolution, names and supply use.
+The live loop animates the chosen angle/power before firing as before.
+
+Moron uses health-quantized random power, points toward a side with enemies and
+chooses a random owned weapon. Shooter chooses the nearest live enemy and
+searches one-degree changes around the line-of-sight angle with a closed-form
+power solution. Spoiler selects a random live enemy, starts at 65°/115° and
+searches its side's angles for a wind-corrected solution. All smart power
+solutions ignore drag; Shooter/Poolshark retain wind blindness. Cyborg uses
+Spoiler's solver with the documented wind/viscosity-dependent starting angle
+and scores weakened, winning and previously hostile enemies. Dead tanks and
+teammates are excluded from deliberate targeting.
+
+Poolshark tests real side-wall and ceiling banks with the shared wall physics
+on Rubber/Spring, including Spring's speed changes. Chooser uses Shooter for a
+clear sightline, Poolshark behind obstructions with Rubber/Spring, otherwise
+Spoiler. Private prediction copies shield strength and terrain erasures, so
+planning cannot damage live state. Tosser never uses this aiming search: its
+first shot is a random ranging lob; later shots adjust once from a real landing
+by ±10 power and, when short/high, two degrees toward vertical outside 85–95°.
+Ranging history is per target. The first terminal impact/interception/exit of
+a shot supplies its landing; later child impacts cannot overwrite it.
+
+Each tank has AI state. A new Unknown rolls one known personality once; its
+controller label remains Unknown in setup and information panels. Round setup
+clears ranging history but preserves personality and grudges. Enemy damage
+(including shield damage) records the attacker; enemy kills add the known +5
+per-victim counter. Environmental/self/team damage does not add retaliation.
+New games reset state. Computers choose unique names from our own name pool,
+avoiding all human names case-insensitively; names survive round boundaries.
+
+With Computers Buy enabled, Moron makes at most 32 affordable weighted-random
+purchases. Other types prioritize an affordable best shield, parachutes,
+Missiles to at least five, batteries, Riot Charge and triggers, then bounded
+weapon/guidance/fuel/Auto Defense purchases. All buying goes through the normal
+shop, so prices, stock limits, arms/usefulness filters, fixed tank restrictions
+and market demand remain authoritative. Computers Buy off prevents purchases
+but never prevents using already-owned supplies.
+
+Before an AI plans, it heals with batteries while health is at most 90, deploys
+parachutes and equips an owned shield only if it improves current strength.
+Buried barrels prefer owned Riot Blast/Charge. Guidance and triggers are selected
+from owned stock; target-requiring guidance receives the planned victim instead
+of the first tank. Close, clear targets can prompt Laser/Plasma use; owned
+napalm is considered only with surface-contact delivery. A mobile AI with fuel
+and an obstructed sightline may drive up to eight pixels toward its target.
+Slips use the ordinary fall pipeline and resume the same turn without another
+supply/movement pass. Auto Defense uses the same preparation policy.
+
+**Explicit local heuristics pending DOSBox comparison:** Shooter's search is
+limited to ±15°, other lobbers search their facing half-plane, and each planning
+probe stops after twelve simulated seconds. Bank search uses mirrored side-wall
+targets plus a bounded angle/power sweep and local refinement, including ceiling
+banks; it does not guarantee every possible bank. Weapon prediction follows a
+Baby Missile to first impact, not every family-specific child/effect. Cyborg's
+health/wins/kills/cash-rank/retaliation weights, damage-based grudge increments,
+weapon preferences, eight-pixel driving rule, supply thresholds, random-buy
+weights and the extended fixed shopping order are local policy. The recovered
+notes establish the buying priority skeleton, not every stock cap or ordering.
+Tosser remembers the first terminal child result when using multi-stage weapons.
+These choices replace the prototype oracle; they are not claimed as a complete
+instruction-for-instruction recreation of the original AI.
+
+**Validation:** tests cover legal shots for all personalities, Moron's power and
+side constraints, open Shooter hits versus blocked ridges and successful Spoiler
+lobs, Rubber/Spring and actual ceiling banks, Chooser's method selection, Tosser's
+real per-target corrections and first-impact recording, Cyborg target signals,
+Unknown stability/secrecy, unique names, defensive stock use, bounded fuel/slips,
+Riot escape, planned guidance targets, complete live AI turns, buying-off behavior,
+priority/stock/arms limits and exact market spending, plus private prediction and
+the retained viscosity weakness. `SCORCHED_AI_PREVIEW_DIR` with `cargo test
+ai_previews` exports all personalities' paths and the nine-controller menu.
+Interactive games and side-by-side DOSBox comparison remain manual validation.
 
 **Done when:** each type plays recognisably like its description.
 
@@ -686,42 +1242,123 @@ Spoiler and Shooter wrong.
 
 Play Options menu *(pp. 47–48)* and System Menu *(pp. 33–35)*:
 
-- [ ] **Play Order** — Random (default: random order **each turn**) /
+- [x] **Play Order** — Random (default: random order **each turn**) /
       Losers-first / Winners-first / Round-robin (random order, but the first
       shot of each round moves on one player).
-- [ ] **Teams** — None / Standard / Corporate / Vicious *(p. 52)*:
+- [x] **Teams** — None / Standard / Corporate / Vicious *(p. 52)*:
   - Standard: teams work together; you lose points for hurting teammates.
   - Corporate: like Standard, but **one shared bank account** per team.
   - Vicious: like Standard while two or more teams are alive, then a
         free-for-all inside the last team.
-- [ ] **Fast Computers** (default off): speeds up the game while only
+- [x] **Fast Computers** (default off): speeds up the game while only
       computers are fighting each other.
-- [ ] **Talking Tanks** — Off (default) / Computers / All, and **Talk
+- [x] **Talking Tanks** — Off (default) / Computers / All, and **Talk
       Probability** 0–100 (default 100). Attack and death phrases come from
       text files: **one phrase per line**, repeated lines are said more
       often, and **blank lines mean silence** *(p. 48)*. Use the same format so
       players can load their own `TALK1.CFG`/`TALK2.CFG`; keep our own phrases
       as the defaults.
-- [ ] **System Menu** (F1 or Alt-S, any time): Clear Screen (traces),
+- [x] **System Menu** (F1 or Alt-S, any time): Clear Screen (traces),
       **Mass Kill** (ends the round, splitting the remaining points), ✅ **Q6**
       Reassign Players (change name or controller), Reassign Teams, Sound
       on/off, Save Game, Restore Game, New Game, Quit (with confirmation).
-- [ ] Player setup screen *(p. 6)*: the background turns the player's colour,
+- [x] Player setup screen *(p. 6)*: the background turns the player's colour,
       you type a name, Tab switches between human and computer, choose a tank
       icon, Enter = Done.
 
+**Implemented:** all batch-17 Play Options are active. `play.rs` owns order,
+team outcomes and round payouts. Random selects a random other living player
+for each shot; Losers/Winners-first use cash (net worth in Greedy) at round
+start and cycle that order. Round-robin shuffles a circle once per new game
+and rotates its first shooter one position each round. Player identities and
+inventories remain stable while battlefield positions and order change.
+
+Team assignment is editable in the coloured player editor and System Menu.
+The default assignment alternates teams 1/2. Standard/Corporate end when one
+team remains, including when it has multiple survivors. Winning living members
+have weight two and dead teammates weight one for the normal survival pool;
+all winning team members receive a round win. Vicious clears runtime teams when
+the last team remains, making its members enemies until an individual wins;
+configured memberships return next round. AI deliberate targeting and ordinary
+friendly-fire damage/kill penalties use the active relationships.
+
+Corporate combines each member's starting cash into a shared team balance.
+Damage, kills, penalties and round awards synchronize that balance; purchases
+and sales synchronize before another shopper can act. Interest is paid exactly
+once per shared bank each round, and its Update total is shared too. Inventory
+remains individual. Corporate standings count each bank once and aggregate its
+members' inventory only for Greedy worth. Reassigning teams first splits old
+shared funds equally (giving the last member any remainder), then merges new
+banks. This is an explicit local regrouping policy that preserves every dollar.
+
+`system.rs` provides a true paused overlay for F1/Alt-S in all phases. World,
+shot, falling, weather, speech and thinking timers stop until resume. Clear
+Screen clears traces; Sound toggles immediately. Mass Kill, New Game and Quit
+require confirmation. Mass Kill pays the exact remaining-health/shield/kill
+pool in MECHANICS §10.2, stops every pending effect, drops all shields and marks
+every tank dead, then ends the round without ordinary survival or kill awards.
+It cannot pay a second time. Reassign Players/Teams use staged edits; Esc
+cancels, and applying controller changes resolves human-only targeting, battery,
+movement or defensive prompts rather than leaving a newly assigned AI waiting.
+**Save/Restore entries are deliberately disabled until batch 22**, which owns
+file persistence and the buying-screen-only save rule; no save support is
+claimed in this batch. Alt-S now belongs to System Menu; Shift-S reverses
+shield selection, and the control-panel Left arrow remains available.
+
+Fast Computers uses a local six-times time scale during battles with at least
+two living computer players and no living humans; menus, buying, defensive
+setup and standings retain normal speed. Ballistics still use fixed simulation
+steps. Talking Tanks now obeys Off/Computers/All and the exact 0–100 probability.
+`speech.rs` loads optional UTF-8/ASCII attack/death files relative to the settings
+folder. Repeated lines retain their weight and blank lines mean silence;
+empty files are silent. Missing/invalid/oversized files report a notice and
+use our own built-in phrases. No original speech assets are included.
+
+Player Setup retains the overview's quick controller/icon selection and adds
+Enter/N to edit a player on a background in that player's colour. Names accept
+1–16 printable characters; typing replaces the initially selected name. Tab
+switches human/computer, arrows choose controller/icon/team, Enter applies and
+Esc cancels. In-game Reassign Players edits names/controllers without replacing
+stock, health or identity. Human-to-computer reassignment chooses a fresh
+computer name unless the user explicitly edited it. Names, icons, controllers,
+team IDs and Play Options persist through Save Changes.
+
+**Local policies pending DOSBox comparison:** Random is independent selection
+without an immediate repeat, while sorted orders are fixed for a round. Exact
+original random scheduling, team regrouping/rounding and dead-member win-count
+policy remain comparison points. Fast speed is ×6; speech uses 0.1 seconds per
+Talk Delay unit, at most 72 displayed characters per phrase and 1 MiB per file.
+The overview/editor arrangement is adapted to this framebuffer. These tuning
+and UI choices are explicit rather than claims of pixel-exact original behavior.
+
+**Validation:** tests cover all order modes and rotation/live filtering,
+team victory/dead-member shares/Vicious breakup and reset, Corporate awards,
+penalties and interest deduplication, exact regrouping conservation, real
+purchases/sales and two-round 2v2 Corporate totals through Game Over, plus a
+complete 2v2 computer game using live projectiles. System tests cover pause
+state, resumed shots, confirmations, Mass Kill math/one-time payout/effect
+cleanup, sound/clear actions, command phase guards, staged cancellation,
+controller reassignment during a guidance prompt and new-game reset. Batch 22
+replaces the disabled Save/Restore guards with working checkpoint dialogs. UI/speech
+tests cover coloured name editing, controller/icon/team changes, reverse shield
+selection, Play Options/file editors, probability/modes and duplicate/blank
+phrase weighting. `SCORCHED_PLAY_PREVIEW_DIR` with `cargo test
+batch_seventeen_previews` exports menus, player/team editors, speech, Vicious
+breakup and Corporate standings. Interactive keyboard/mouse play and DOSBox
+comparison remain manual validation.
+
 **Done when:** a 2v2 Corporate team game plays to the end.
 
-## Batch 18 – Synchronous and Simultaneous modes (L)
+## Batch 18 – Synchronous and Simultaneous modes (L) ✅
 **Depends on:** 17
 
 Play Options "Mode": Sequential (default) / Synchronous / Simultaneous
 *(pp. 47, 51–52)*.
 
-- [ ] **Synchronous**: each player aims and "fires" in turn, but nothing flies;
+- [x] **Synchronous**: each player aims and "fires" in turn, but nothing flies;
       the tank is highlighted as ready. When everyone is ready, **all shots go
       at once**. Repeat until the round ends.
-- [ ] **Simultaneous**: everyone aims and fires in real time on one keyboard.
+- [x] **Simultaneous**: everyone aims and fires in real time on one keyboard.
   - Each human chooses **6 keys** during setup (turn clockwise, turn
         counter-clockwise, power up, power down, fire, change weapon), with
         no duplicates allowed.
@@ -737,97 +1374,313 @@ Play Options "Mode": Sequential (default) / Synchronous / Simultaneous
 **Done when:** Synchronous with 3 players and Simultaneous with 2 humans both
 work.
 
-## Batch 19 – Sky and landscape (M)
+**Implemented:** the Play Options Mode selector activates all three modes.
+`modes.rs` holds six-key maps, a staged key-capture editor, queued shot commands,
+per-player AI timing/flashes/energy visuals/temporary traces, and a compact
+two-column HUD supporting ten players. Player Setup K or its Keys button opens
+assignment for the selected human. Duplicate bindings across active humans and
+reserved Escape/F1/F11/modifier keys are rejected; maps use settings persistence
+and are excluded from saved games. Player reassignment validates and applies maps.
+
+Synchronous stores aim, weapon, target, AI intent and energy charge until every
+living player commits. No projectiles, instant earth effects, energy damage or
+ammo spending happen during commitment. Ready tanks are outlined/labeled. The
+volley launches together, retaining shots from owners killed by an earlier
+energy discharge in that same launch; owners dead before launch are skipped.
+Guidance and battery prompts, accessories and movement retain their turn flow.
+Random order cannot revisit an already-ready tank. Wind, walls and suspended
+dirt are shared for the volley; resolving all effects starts the next cycle.
+
+Simultaneous polls each human map independently, applies one-degree/two-power
+steps through the existing repeat timer, and accepts held fire only when that
+owner's projectiles, child explosions, earth/liquid effects and energy visuals
+are finished. Other owners keep firing. Deaths resolve during ongoing combat;
+new firing stops when a round could end, allowing pending ordnance and death
+chains to finish before scoring. Corporate/Vicious outcomes use the existing
+rules. Support removal records the responsible owner for fall damage. Temporary
+traces are replaced per owner, and Clear Screen clears everyone's traces.
+
+Manual battlefield panels, movement, retreat, mouse controls and guidance are
+bypassed in real-time play. Owned Auto Defense permits pre-battle shields;
+computers do not replenish shields outside that setup. Parachutes are forced
+deployed, retaining the saved threshold preference but ignoring it during this
+mode. Automatic batteries heal only living tanks below 91 and flash green.
+Power/weapon flashes and the HUD's busy marker remain independent per tank.
+System Menu pauses every runtime timer and works with saves/restores/new games.
+
+**Local policies pending original-game comparison:** held fire repeats on
+completion; energy uses the maximum available charge up to ten; computer aim
+uses 100 degrees/1000 power units per second after a 0.4-second planning delay,
+firing no earlier than 1.2 seconds. Wind/Erratic walls have a 1.2-second real-time
+cadence. The real-time HUD uses two columns and expands sky clearance with the
+roster. These timings/layouts are local choices, not recovered v1.5 constants.
+The shared liquid pool cap now permits ten owners, while its queue stays bounded.
+
+**Validation:** tests exercise a complete three-human queued volley, next-cycle
+readiness, energy/targeted guidance deferral, dead ready players and same-volley
+casualties; two independent human inputs, aiming during flight and per-owner
+refiring; automatic supplies/flashes and disabled guidance; separate earth,
+liquid and energy lifecycles; fall ownership; deaths during flight and delayed
+round awards; completed computer matches in both modes; pause/reassignment;
+temporary trace cleanup; shop restore into both modes; ten-player key-map
+persistence/conflict checks and staged key capture through Player Setup.
+Framebuffer previews cover readiness, a volley, two-human combat, ten-player
+HUD, Mode selection and the key editor. Live keyboard rollover, interactive
+two-human play and DOSBox fidelity comparison remain manual checks. All 309
+tests pass, the release build succeeds, and formatting/diff checks pass.
+
+## Batch 19 – Sky and landscape (M) ✅
 **Depends on:** 2
 
 Landscape menu *(p. 46)*:
 
-- [ ] **Sky**: Plain / Stormy / Stars / Shaded / Sunset / Cavern / Black /
+- [x] **Sky**: Plain / Stormy / Stars / Shaded / Sunset / Cavern / Black /
       Random (default Random, which **never picks Black**). Stormy is a ✅ **Q21**
       **hostile** sky that throws lightning. Cavern is a new 1.5 sky (a cave
       ceiling). Black is pitch dark: "test your skills at night".
-- [ ] **Hostile Environment** (default **on**): if off, hostile skies still
+- [x] **Hostile Environment** (default **on**): if off, hostile skies still
       act but do no damage.
-- [ ] No meteors: the author's FAQ says meteor showers were added in v1.1, but
+- [x] No meteors: the author's FAQ says meteor showers were added in v1.1, but
       v1.5's EXE contains no meteor text or option. Only Stormy lightning is
       hostile in v1.5. (Meteors could be an optional extra.)
-- [ ] **Terrain generator like the original** (`MECHANICS.md` §5.3; open
-      research in `TERRAIN_FOLLOWUP.md`):
-      midpoint displacement with 4–6 subdivision levels (16–64 segments), a
-      random roughness, and the points joined by straight lines. Offsets are
-      `(random(17) − 8) / 8 × amp`, and `amp` shrinks by `1 / 2^H` per level.
-- [ ] **Make Bumpiness, Slope and Flatten Peaks actually work** (our
-      improvement: in v1.5 the generator ignores them, though the manual says
-      they shape the land):
-  - **Bumpiness** 0–100 (default 20) → roughness: how slowly `amp` shrinks
-    (lower `H`) and how many subdivision levels (more levels = more small
-    bumps).
-  - **Slope** 0–100 (default 20) → overall height range of hills and valleys,
-    and how far apart the two end heights may be.
-  - **Flatten Peaks** (default off) → cap the height difference between
-    neighbouring points, so hills can't get too steep or craggy.
-  - **Defaults must look like the original:** at 20 / 20 / off the terrain
-    should match v1.5's smooth 16–64-segment polylines. Compare side by side
-    with the original in DOSBox.
-- [ ] **"Classic terrain" option** (Landscape menu, default off): when on,
+- [x] **Terrain generator like the original** (`MECHANICS.md` §5.3;
+      corrected research in `TERRAIN_FOLLOWUP.md`): the live DefaultLand class
+      uses an integer random walk in grade, with fixed 20% probabilities for
+      changing grade and doubling acceleration. Clamp to `ymin+40..ymax-1`,
+      with different reactions at the upper/lower limits. End heights are not
+      forced equal. The midpoint-displacement module exists but is not selected.
+- [x] **Make Bumpiness, Slope and Flatten Peaks actually work** (our
+      improvement: the original constructor fixes all three class parameters):
+  - **Bumpiness** 0–100 (default 20): percentage of columns changing grade.
+  - **Slope** 0–100 (default 20): percentage of changes using double acceleration.
+  - **Flatten Peaks** (default off): reset grade to zero when it exceeds ±3.
+  - [x] **DOSBox visual follow-up:** compare 20/20/off defaults with the live
+      integer walk and Cavern's independent half-field walks. The earlier
+      16–64-segment/equal-endpoint target was based on the wrong routine.
+- [x] **"Classic terrain" option** (Landscape menu, default off): when on,
       ignore the three settings exactly as v1.5 does.
-- [ ] **Random Land** (default off): each round set Flatten Peaks =
+- [x] **Random Land** (default off): each round set Flatten Peaks =
       `random(2)`, Bumpiness = `random(100)`, Slope = `random(100)`, as in
       the original.
-- [ ] **Percent Scanned Mountains** 0–100 (20): how often to use a scanned ✅ **Q22**
+- [x] **Percent Scanned Mountains** 0–100 (20): how often to use a scanned ✅ **Q22**
       mountain picture instead of a random landscape. The `.MTN` format is now
       known (`MECHANICS.md` §17.1). Load `.MTN` files from a folder the player
       points to (don't ship the original's files), and PNG pictures as our own
       format.
-- [ ] **Dirt colours**: pick one of several colour schemes at random each
+- [x] **Dirt colours**: pick one of several colour schemes at random each
       round (the original has 6).
+
+**Implementation and native-terrain fidelity follow-up complete (2026-11-17).**
 
 **Done when:** every sky type looks distinct, lightning can damage a tank in a
 Stormy sky, the default terrain looks like the original's, and moving each
 landscape slider visibly changes the land (except in Classic mode).
+
+Implementation: `landscape.rs` now implements the live `323a:0a68` walk,
+selected by vtable `DS:508c` in the DefaultLand constructor. `MECHANICS.md` §5.3
+and `TERRAIN_FOLLOWUP.md` document the full caller/bounds proof and correct the
+previous midpoint-displacement assumption. Native Cavern uses two independent
+walks, floor first then roof, in the lower/upper vertical halves. No arbitrary
+55–75% midpoint, equal endpoints, shallow roof or 96-pixel gap remains. The
+persistent native generator reverses direction between uses. The class's
+original 20/20/off defaults match Classic; non-Classic exposes its parameters
+through working sliders. The tribute keeps its own RNG and HUD/full-viewport
+bounds, so this is algorithm fidelity rather than reproducing a DOS RNG seed.
+
+All seven skies render distinctly; Random chooses the six non-Black skies.
+Cavern has a top-anchored destructible roof, a shaded interior, and floor-based
+placement. Detached roof pixels fall; tank pads preserve the roof. Six original
+solid earth colours at DS:5036 are selected independently of the sky. Cavern
+shading now uses the recovered 30 horizontal VGA bands around the global field
+midpoint; Plain uses the original VGA (9,9,31) blue.
+
+Stormy throws visible, randomly positioned bolts while aiming (paused during
+panels and defensive setup). Hostile Environment off keeps the bolts and
+thunder but prevents damage. Local tuning is a strike every 3–8 seconds after
+an initial 4-second wait, 35 damage within 24 pixels, with shields absorbing
+first. Storm damage, deaths and secondary blasts award no player damage/kill
+money or suicide penalty. Resolution preserves the current player's un-fired
+turn when they survive; a killed current player is skipped. No meteors.
+
+The Mountains Folder editor accepts a path (Enter applies, Esc cancels, empty
+disables). Relative paths use the config file's directory. Per-round percentage
+selection loads user MTN or PNG files without shipping original assets. MTN
+uses the documented mixed-endian header and bottom-up packed columns; PNG uses
+alpha below 128 as sky, or top-connected top-left background colour for opaque
+images. Nearest-neighbour scaling fits the playable field. Limits are 16 MiB,
+4096 per side and 4M pixels; bad candidates are skipped, and failure shows a
+notice before falling back to generated land. Cavern ensures local clearance
+when combined with custom mountains. Imported colours remain destructible.
+
+Validation covers decoder/truncation, random selection, Classic/default walk,
+working sliders, roof/settling, ten-player placement, external loading, relative
+paths, menu editing and neutral storm scoring. The follow-up adds an interpreter
+that executes the original integer instructions with an injected RNG; fixtures
+compare every floor/ceiling column against Rust, including reverse direction,
+clamping, extreme HUD bounds, flattening and consecutive Cavern RNG streams.
+Ten tank pads fit the recovered minimum gap without erasing the roof. Combat
+unit fixtures now use fixed terrain so native high peaks cannot turn a MIRV
+apex test into a random ground collision. Original-screen capture, measurement
+and contact-sheet tools provide the reproducible DOSBox comparison workflow.
+Framebuffer previews cover skies, sliders, imports, original Cavern shading,
+and 30 native Plain/Cavern layouts. See `TERRAIN_FOLLOWUP.md` for evidence and
+remaining limits on imported-mountain mapping and other sky artwork. The final
+comparison uses 30 completed DOSBox landscapes per sky and 30 Rust renders per
+sky, with an inspected contact sheet. All 315 tests and the release build pass.
 
 ## Batch 20 – Sound (M)
 **Depends on:** 2
 
 Sound menu *(p. 39)*. The original used only the **PC speaker**.
 
-- [ ] Generate square-wave beeps in code (no audio files), turn them into WAV
+- [x] Generate square-wave beeps in code (no audio files), turn them into WAV
       bytes in memory, and play them with macroquad's `audio` module.
-- [ ] **Sound** on/off, default on.
-- [ ] **Flight Sounds** — Off (default) / POS (pitch follows the shot's
+- [x] **Sound** on/off, default on.
+- [x] **Flight Sounds** — Off (default) / POS (pitch follows the shot's
       **height**; most people prefer this) / VEL (pitch follows its **speed**).
-- [ ] Explosions, firing, deaths, menu clicks. 🟡 **Q23**
+- [x] Explosions, firing, deaths, menu clicks. 🟡 **Q23**
+
+**Implemented:** macroquad's `audio` feature is enabled. `sound.rs` synthesizes
+mono 44,100 Hz, 16-bit PCM square-wave WAV buffers in memory and loads a cached
+bank through `load_sound_from_bytes`. No audio assets are shipped. Short
+amplitude ramps soften sample boundaries while keeping square-wave timbre.
+
+The Sound menu enables Sound (default on) and Flight Sounds Off/POS/VEL
+(default Off), including hotkeys, reverse cycling and settings persistence.
+POS raises pitch with projectile altitude; VEL raises it with speed. Flight
+uses 32 cached pitch bins (roughly 220–2200 Hz) with integer-period seamless
+loops. One representative airborne projectile drives the tone during resolving;
+rollers, shield traversal, effect markers and other phases do not produce a
+flight tone. Turning Sound off immediately requests silence and discards
+pending effects. Turning flight mode Off leaves ordinary effects enabled.
+
+Playback is monophonic: effects interrupt flight, higher-priority effects
+replace lower-priority ones, and flight resumes after the effect ends.
+Simultaneous identical events are deduplicated in a bounded bitset, and
+lower-priority events are dropped rather than queued behind old sounds.
+Scheduling uses frame time and never pauses physics or turn progression.
+
+Firing uses the recovered 1000/2500/4000/5500/7000/8500/10000 Hz chirp, and
+direct shield contact uses a 1000 Hz beep. Riot weapons have a rising/falling
+siren. Other generated cues cover ordinary/nuclear explosions, deaths and
+retreat, splits, digging, dirt deposition and Earth Disrupter's hundred-beep
+pulse. Logical menu, shop and battlefield-panel actions have click feedback;
+idle frames, held aiming keys and rejected actions stay quiet. Tracer impacts
+remain harmless and make no explosion sound; intercepted bombs make the shield
+beep without an explosion/chain cue. Each new explosion stage has a cue.
+
+The recovered frequencies are retained, but durations, most other sweeps,
+priority order, flight mapping and amplitude are explicit local sound-design
+choices. Exact v1.5 audio timing still needs listening against DOSBox.
+Laser/plasma cues are connected in batch 12; splash/burning cues in batch 11.
+
+**Validation:** tests cover PCM/WAV headers and duration, amplitude bounds,
+measured square-wave pitch, the firing/shield frequencies, zero-DC seamless
+flight loops, POS/VEL mapping and clamps, single-voice priority/resume/retrigger,
+mute and event disposal, menu persistence/clicks, action-to-cue routing,
+representative-shot selection and unchanged physics with sound on/off. The
+preview exporter writes individual cues, flight samples and a demo when
+`SCORCHED_SOUND_PREVIEW_DIR` is set. Fifteen exported WAVs passed Python's
+independent `wave` parser, and the demo played through ALSA's null device.
+The audio-enabled release build succeeds; real speaker output and side-by-side
+DOSBox listening remain manual checks.
 
 **Done when:** it sounds like a 1991 PC speaker.
 
-## Batch 21 – Presentation polish (M)
+## Batch 21 – Presentation polish (M) ✅
 **Depends on:** –
 
-- [ ] Several tank **death animations** (the original has a variety). ✅ **Q24**
-- [ ] **Bigger nuclear explosions** (the manual calls them "awesome"; check ✅ **Q24**
-      what they look like in DOSBox).
-- [ ] **Mouse control** as in the original *(pp. 5, 11)*: left/right click
-      on "Power" or "Angle" to lower/raise it, click the weapon name to cycle,
-      **both buttons together = fire**, click the player name for the Tank
-      Control Panel (right click = inventory), and click a tank for its
-      information.
-- [ ] Optional extra (not in the original): integer-scaled fullscreen, and a
-      choice between 640×480 and 320×200 internal resolution (the original
-      supported several modes; 360×480 was its default).
+- [x] Several tank **death animations**: thud, single/double/triple escalating
+      blasts, six flame plumes, grey bubbles, scattered hull pixels and reflected
+      spark rays. ✅ **Q24**
+- [x] **Bigger nuclear explosions**: Baby Nuke and Nuke use full-radius mottled
+      red/black plasma, growing for one simulation second and shimmering for two
+      before disappearing and carving the crater, following the recorded DOSBox
+      observation in **Q24**. Weapon radii and Scale remain authoritative.
+- [x] **Mouse control** as in the original *(pp. 5, 11)*: left/right click
+      Power or Angle to lower/raise; hold to repeat; click the weapon name to
+      cycle (right click reverses); **both buttons together fire**. Left/right
+      click the player name opens Tank Control/Inventory; click a tank for info.
+- [x] Complete mouse paths through shop categories/paging/buying/selling,
+      player editor apply/cancel, equipment and inventory, parachute threshold,
+      battery discharge, movement, targeting, retreat, standings and System Menu
+      confirmations. A visible System button opens the paused menu.
+- [x] Optional extra: integer-scaled fullscreen (Hardware option, persisted with
+      Save Changes; F11 toggles immediately). Letterboxing and mouse coordinates
+      share the existing viewport.
 
 **Done when:** you can play the whole game with only the mouse.
 
-## Batch 22 – Saved games (S)
+Implemented with 286 passing tests and a release build. Coverage includes a
+mouse-driven match through firing, battery discharge, damage/kill scoring and
+final standings; two-button chord suppression/rearming; all mouse toolbars;
+player edits; fullscreen settings round-trip; distinct death rendering and
+screen-edge clipping; and the nuke growth/shimmer/crater boundary. Framebuffer
+previews exported to `/tmp/scorched-presentation` and visually inspected.
+Live mouse/fullscreen operation and side-by-side DOSBox fidelity remain manual
+checks. Death variants are visual approximations sharing the existing death
+blast damage, attribution and scoring, rather than new weapon effects.
+
+## Batch 22 – Saved games (S) ✅
 **Depends on:** 7
 
 *(p. 35)*
 
-- [ ] **Save Game only from the buying screen** (so the battlefield never needs
+- [x] **Save Game only from the buying screen** (so the battlefield never needs
       saving), Restore any time from the System Menu. Ask before overwriting a
       file.
-- [ ] As in the original, a save holds the players, money, inventory and round,
-      but **not** the options. The options come from the settings file.
-- [ ] Extra (not in the original): a hall of fame of best final scores.
+- [x] As in the original, a save holds the players, money, inventory and round,
+      but **not** the options (except player and round counts; see
+      `MECHANICS.md` §17.3). Options remain those loaded from the settings file,
+      including changes made in the current session.
+- [x] Optional extra: a persistent hall of fame of best final scores.
+
+**Hall of fame (2026-11-17):** keeps the top ten scores separately for Basic,
+Standard (cash), and Greedy (net worth at final prices). Every participant,
+including computers, qualifies; Corporate shared banks appear once, with all
+members' inventory included in Greedy worth. Completed matches record after
+final-round awards, once per completion; partial matches do not record. Ties
+retain older entries first. Records include round and player counts for context.
+Main Menu **Hall of Fame** (`F`) and the screen after final standings provide
+keyboard/mouse browsing. Versioned `hall_of_fame.toml` lives beside settings,
+independently of shop checkpoints and Save Changes. Exact money values persist
+with atomic writes; invalid files are preserved and errors leave session scores
+available. This is a local tribute feature, not a recovered DOS mechanism.
+
+Validation covers per-mode limits, exact large scores, ties, Corporate cash and
+inventory, completion timing and duplicate prevention, restart/restore, missing,
+invalid and oversized files, failed writes, keyboard/mouse paths and framebuffer
+previews. All 322 tests and the release build pass; the exported board and main
+menu were visually inspected.
+
+**Implemented:** `saved_game.rs` defines a strict version-1 TOML checkpoint,
+separate from settings and the battlefield. It preserves the current buyer,
+round/total rounds, interest-paid marker, complete player stock and exact money,
+equipment preferences and opened fuel, names/controllers/icons/team IDs,
+wins/kills, resolved Unknown personalities/grudges, turn-order circle and market
+state. Purchases by earlier buyers are retained without running their shopping
+again. Corporate account replicas are validated; restoring with different team
+options conserves funds when accounts split or merge.
+
+System Menu V opens Save Game only in Shop; R opens Restore Game in any phase.
+Both have keyboard/mouse filename submission and cancellation; existing save
+destinations require explicit overwrite confirmation. Relative paths use `saves`
+beside the settings file; absolute filenames work. Files use the existing atomic
+write helper. Missing, malformed, oversized, unsupported-version and invalid-state
+files report an error without changing the live game. Restore builds a fresh
+shop state, clearing old shots, terrain effects, controls and AI plans, and
+reloads speech from the current options. Battlefields are generated on leaving
+the shop. The format is local to this tribute, without DOS save compatibility.
+
+**Validation:** regression tests cover round trips with arbitrary-size cash,
+inventory/equipment, AI personality/grudges, market and order; current-buyer and
+completed-computer purchase preservation; Corporate funds and once-per-round
+interest; continuing to final standings; keyboard/mouse file dialogs and overwrite
+cancel/confirm; filenames with spaces; bounded/invalid reads preserving an active
+shot; and failed atomic writes preserving an existing save. Framebuffer previews
+cover the shop menu, Save/Restore filename dialogs, overwrite prompt and errors.
+All 293 tests pass and the release build succeeds. Live keyboard/mouse
+interaction remains a manual check.
 
 **Done when:** you can quit after a round and continue later.
 

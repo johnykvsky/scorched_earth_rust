@@ -1,6 +1,6 @@
 //! Shared fixed-step ballistics and the original wind/settling rules.
 use crate::gfx::W;
-use crate::settings::PhysicsSettings;
+use crate::settings::{PhysicsSettings, WallType};
 use macroquad::prelude::Vec2;
 use macroquad::rand::gen_range;
 
@@ -13,6 +13,8 @@ pub struct Physics {
     pub wind: f32,
     pub air_viscosity: u8,
     pub borders_extend: u16,
+    pub walls: WallType,
+    pub ceiling: f32,
 }
 
 impl Physics {
@@ -22,6 +24,8 @@ impl Physics {
             wind: 1.25 * wind as f32,
             air_viscosity: settings.air_viscosity,
             borders_extend: settings.borders_extend,
+            walls: settings.walls,
+            ceiling: crate::ui::HUD_H as f32,
         }
     }
 
@@ -46,14 +50,121 @@ impl Physics {
             return;
         }
         let drag = 1.0 - self.air_viscosity as f32 / 10000.0;
-        *vel *= if air_time >= step_time { drag } else { drag.powf(air_time / step_time) };
+        *vel *= if air_time >= step_time {
+            drag
+        } else {
+            drag.powf(air_time / step_time)
+        };
         vel.y += self.gravity * air_time;
         vel.x += self.wind * air_time;
+    }
+
+    /// Test only the closed boundaries; None/Wrap leave the ceiling open.
+    pub fn at_wall(&self, pos: Vec2) -> bool {
+        match self.walls {
+            WallType::None | WallType::Random | WallType::Erratic => false,
+            WallType::WrapAround => pos.x < 0.0 || pos.x >= W as f32,
+            _ => pos.x < 0.0 || pos.x >= W as f32 || pos.y < self.ceiling,
+        }
+    }
+
+    pub fn wall_contact(&self, pos: &mut Vec2, velocity: &mut Vec2) -> WallContact {
+        if !self.at_wall(*pos) {
+            return WallContact::None;
+        }
+        if self.walls == WallType::WrapAround {
+            pos.x = pos.x.rem_euclid(W as f32).min((W as f32).next_down());
+            return WallContact::Wrapped;
+        }
+        let left = pos.x < 0.0;
+        let right = pos.x >= W as f32;
+        let top = pos.y < self.ceiling;
+        if left {
+            pos.x = 0.0;
+        }
+        if right {
+            pos.x = (W as f32).next_down();
+        }
+        if top {
+            pos.y = self.ceiling;
+        }
+        if self.walls == WallType::Concrete {
+            return WallContact::Blocked;
+        }
+        let factor = self.walls.bounce_factor().unwrap_or(1.0);
+        if left {
+            velocity.x = velocity.x.abs() * factor;
+        }
+        if right {
+            velocity.x = -velocity.x.abs() * factor;
+        }
+        if top {
+            velocity.y = velocity.y.abs() * factor;
+        }
+        WallContact::Bounced
     }
 
     /// The top stays open for high arcs; the lateral margin lets wind return shots.
     pub fn beyond_border(&self, x: f32) -> bool {
         x < -(self.borders_extend as f32) || x >= W as f32 + self.borders_extend as f32
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WallContact {
+    None,
+    Wrapped,
+    Bounced,
+    Blocked,
+}
+
+pub const FIXED_WALLS: [WallType; 6] = [
+    WallType::None,
+    WallType::WrapAround,
+    WallType::Padded,
+    WallType::Rubber,
+    WallType::Spring,
+    WallType::Concrete,
+];
+impl WallType {
+    pub fn bounce_factor(self) -> Option<f32> {
+        match self {
+            Self::Padded => Some(0.5),
+            Self::Rubber => Some(1.0),
+            Self::Spring => Some(2.0),
+            _ => None,
+        }
+    }
+    pub fn choose(self) -> Self {
+        if matches!(self, Self::Random | Self::Erratic) {
+            FIXED_WALLS[gen_range(0, FIXED_WALLS.len())]
+        } else {
+            self
+        }
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::None => "None",
+            Self::WrapAround => "Wrap-around",
+            Self::Padded => "Padded",
+            Self::Rubber => "Rubber",
+            Self::Spring => "Spring",
+            Self::Concrete => "Concrete",
+            Self::Random => "Random",
+            Self::Erratic => "Erratic",
+        }
+    }
+    pub fn color(self) -> crate::gfx::Rgb {
+        use crate::gfx::Rgb;
+        match self {
+            Self::None => Rgb::GRAY,
+            Self::Concrete => Rgb::WHITE,
+            Self::Padded => Rgb(0, 255, 0),
+            Self::Rubber => Rgb(255, 0, 0),
+            Self::Spring => Rgb(0, 255, 255),
+            Self::WrapAround => Rgb(255, 255, 0),
+            _ => Rgb::GRAY,
+        }
     }
 }
 
@@ -168,6 +279,99 @@ mod tests {
                 (0..100).filter(|&roll| dirt_falls(suspend, roll)).count(),
                 (100 - suspend) as usize
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod wall_tests {
+    use super::*;
+    use macroquad::prelude::vec2;
+
+    #[test]
+    fn reflecting_walls_change_only_the_normal_velocity_and_handle_corners() {
+        for (wall, factor) in [
+            (WallType::Padded, 0.5),
+            (WallType::Rubber, 1.0),
+            (WallType::Spring, 2.0),
+        ] {
+            let mut settings = PhysicsSettings::default();
+            settings.walls = wall;
+            let physics = Physics::new(&settings, 0);
+            for (mut pos, velocity, expected) in [
+                (
+                    vec2(-0.01, 100.0),
+                    vec2(-100.0, 25.0),
+                    vec2(100.0 * factor, 25.0),
+                ),
+                (
+                    vec2(W as f32, 100.0),
+                    vec2(100.0, 25.0),
+                    vec2(-100.0 * factor, 25.0),
+                ),
+                (
+                    vec2(100.0, physics.ceiling - 0.01),
+                    vec2(25.0, -100.0),
+                    vec2(25.0, 100.0 * factor),
+                ),
+                (
+                    vec2(-0.01, physics.ceiling - 0.01),
+                    vec2(-100.0, -100.0),
+                    vec2(100.0 * factor, 100.0 * factor),
+                ),
+            ] {
+                let mut velocity = velocity;
+                assert_eq!(
+                    physics.wall_contact(&mut pos, &mut velocity),
+                    WallContact::Bounced
+                );
+                assert_eq!(velocity, expected);
+                assert!(!physics.at_wall(pos));
+            }
+        }
+    }
+
+    #[test]
+    fn wrap_preserves_height_speed_and_overshoot_while_concrete_blocks_every_closed_edge() {
+        let mut settings = PhysicsSettings::default();
+        settings.walls = WallType::WrapAround;
+        let mut physics = Physics::new(&settings, 0);
+        for (x, expected) in [(-12.0, W as f32 - 12.0), (W as f32 + 12.0, 12.0)] {
+            let mut pos = vec2(x, -500.0);
+            let mut velocity = vec2(100.0, -25.0);
+            assert_eq!(
+                physics.wall_contact(&mut pos, &mut velocity),
+                WallContact::Wrapped
+            );
+            assert_eq!(pos, vec2(expected, -500.0));
+            assert_eq!(velocity, vec2(100.0, -25.0));
+        }
+        physics.walls = WallType::Concrete;
+        for mut pos in [
+            vec2(-1.0, 100.0),
+            vec2(W as f32, 100.0),
+            vec2(100.0, physics.ceiling - 1.0),
+        ] {
+            assert_eq!(
+                physics.wall_contact(&mut pos, &mut vec2(0.0, -100.0)),
+                WallContact::Blocked
+            );
+            assert!(!physics.at_wall(pos));
+        }
+        physics.walls = WallType::None;
+        assert!(!physics.at_wall(vec2(-1.0, -500.0)));
+        assert!(!physics.beyond_border(-1.0));
+    }
+
+    #[test]
+    fn random_wall_choices_are_always_one_of_the_six_fixed_types() {
+        for mode in [WallType::Random, WallType::Erratic] {
+            for _ in 0..100 {
+                assert!(FIXED_WALLS.contains(&mode.choose()));
+            }
+        }
+        for wall in FIXED_WALLS {
+            assert_eq!(wall.choose(), wall);
         }
     }
 }

@@ -33,7 +33,9 @@ pub struct Fb {
 
 impl Fb {
     pub fn new() -> Self {
-        Fb { img: Image::gen_image_color(W as u16, H as u16, BLACK) }
+        Fb {
+            img: Image::gen_image_color(W as u16, H as u16, BLACK),
+        }
     }
 
     pub fn pixels_mut(&mut self) -> &mut [u8] {
@@ -105,7 +107,9 @@ impl Fb {
     /// Text in the DOS 8x16 look (8x8 glyphs, doubled vertically) times `s`.
     pub fn text_scaled(&mut self, x: i32, y: i32, s: &str, c: Rgb, s_x: i32, s_y: i32) {
         for (n, ch) in s.chars().enumerate() {
-            let Some(glyph) = BASIC_FONTS.get(ch) else { continue };
+            let Some(glyph) = BASIC_FONTS.get(ch) else {
+                continue;
+            };
             let gx = x + n as i32 * 8 * s_x;
             for (row, bits) in glyph.iter().enumerate() {
                 for col in 0..8 {
@@ -154,7 +158,10 @@ impl Viewport {
     }
 
     pub fn point(&self, x: f32, y: f32) -> (i32, i32) {
-        (((x - self.x) / self.scale).floor() as i32, ((y - self.y) / self.scale).floor() as i32)
+        (
+            ((x - self.x) / self.scale).floor() as i32,
+            ((y - self.y) / self.scale).floor() as i32,
+        )
     }
 }
 
@@ -170,7 +177,45 @@ mod viewport_tests {
                 (100, 200)
             );
             assert_eq!(view.point(view.x - 1.0, view.y - 1.0).0 < 0, true);
-            assert_eq!(view.point(view.x + view.width, view.y + view.height), (W, H));
+            assert_eq!(
+                view.point(view.x + view.width, view.y + view.height),
+                (W, H)
+            );
         }
+    }
+}
+
+/// A round's persistent paths occupy at most one colour per framebuffer pixel.
+pub struct TraceLayer {
+    pixels: Vec<Option<Rgb>>,
+}
+impl Default for TraceLayer {
+    fn default() -> Self {
+        Self {
+            pixels: vec![None; (W * H) as usize],
+        }
+    }
+}
+impl TraceLayer {
+    pub fn clear(&mut self) {
+        self.pixels.fill(None);
+    }
+    pub fn record(&mut self, points: &[(i32, i32, Rgb)], owner_color: Option<Rgb>) {
+        for &(x, y, color) in points {
+            if (0..W).contains(&x) && (0..H).contains(&y) {
+                self.pixels[(y * W + x) as usize] = Some(owner_color.unwrap_or(color));
+            }
+        }
+    }
+    pub fn draw(&self, fb: &mut Fb) {
+        for (i, color) in self.pixels.iter().enumerate() {
+            if let Some(color) = color {
+                fb.put(i as i32 % W, i as i32 / W, *color);
+            }
+        }
+    }
+    #[cfg(test)]
+    pub fn count(&self) -> usize {
+        self.pixels.iter().filter(|pixel| pixel.is_some()).count()
     }
 }

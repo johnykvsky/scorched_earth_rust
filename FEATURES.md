@@ -8,14 +8,16 @@ Status legend: [x] in prototype · [~] partial/simplified · [ ] not yet
 - [x] Turn-based artillery: set angle + power, fire, hit the other tanks
 - [x] 2–10 players on one screen, hot-seat
 - [x] Human or computer-controlled players
-- [x] Multiple rounds; last tank standing wins the round
+- [x] Multiple rounds; last tank or team standing wins the round
 - [x] Money-based scoring for damage, kills and survival; cash standings
 - [x] Scoring modes: Basic / Standard / Greedy
-- [ ] Teams: None / Standard / Corporate (shared bank) / Vicious
-- [ ] Play order: Random, Losers-first, Winners-first, Round-robin
-- [ ] Play modes: Sequential ([x] done), Synchronous, Simultaneous
+- [x] Teams: None / Standard / Corporate (shared bank) / Vicious
+- [x] Play order: Random, Losers-first, Winners-first, Round-robin
+- [x] Fast Computers speeds battles when only computers remain
+- [x] Play modes: Sequential, Synchronous queued volleys, Simultaneous shared-keyboard combat
 - [x] Max power limited by tank health (power = health × 10)
-- [ ] Tank movement using fuel ("Fuel Tank" accessory)
+- [x] Tank movement using fuel (slope costs, slips, parachutes and retained aiming turn)
+- [x] Seven selectable tank shapes; fixed emplacement fuel restrictions and computer-only triple turret
 
 ## Physics & environment
 - [x] Gravity, ballistic trajectories
@@ -27,61 +29,78 @@ Status legend: [x] in prototype · [~] partial/simplified · [ ] not yet
 - [x] Destructible pixel terrain
 - [x] Falling dirt after explosions
 - [x] Tanks fall when ground is removed; 2 damage per pixel, on landing or during descent
-- [ ] Parachutes (prevent fall damage)
-- [ ] Wall types: None, Concrete, Rubber, Spring, Wrap-around, Padded, Random, Erratic
-      (prototype: none, shots are tracked within the Borders Extend margin)
-- [~] Sky types: Plain, Stormy, Stars, Shaded, Sunset, Cavern, Black, Random (prototype: 4 gradient skies)
-- [~] Random terrain shapes and colors (prototype: midpoint-displacement mountains, 4 palettes)
-- [ ] Hostile environment (lightning from Stormy skies)
+- [x] Parachutes: deployed/passive, safety threshold, predicted falls and 20 ms descent
+- [x] Wall types: None, Concrete, Rubber, Spring, Wrap-around, Padded, Random, Erratic
+      (shared live/AI collisions; rollers and child warheads included)
+- [x] Sky types: Plain, Stormy, Stars, Shaded, Sunset, Cavern, Black, Random (Random excludes Black)
+- [x] Original integer random-walk terrain, verified bounds and six solid dirt colours
+- [x] Cavern's independent half-field floor/roof walks and global horizontal shading; binary oracle and DOSBox comparison
+- [x] Stormy lightning, shield absorption, neutral scoring and harmless Hostile Environment off
 - [x] Ground flattened under each tank at placement
-- [ ] Landscape settings: Bumpiness, Slope, Flatten Peaks (unused in the original v1.5; we plan to make them work), Random Land, scanned mountains
+- [x] Bumpiness, Slope, Flatten Peaks, Classic Terrain, per-round Random Land
+- [x] User-selected mountains folder: MTN / PNG loading, percentage selection and fallback
 
 ## Weapons (original list)
 - [x] Baby Missile (unlimited), [x] Missile, [x] Baby Nuke, [x] Nuke
-- [ ] LeapFrog
-- [x] Funky Bomb
+- [x] Leap Frog (three sequential shrinking blasts)
+- [x] Funky Bomb (opening burst, 5–10 curved trails and final blast)
 - [x] MIRV (splits into warheads at apex)
-- [ ] Death's Head
-- [ ] Napalm, Hot Napalm (burning liquid that flows downhill)
-- [x] Tracer, [ ] Smoke Tracer
-- [ ] Baby Roller, [x] Roller, [ ] Heavy Roller
-- [ ] Riot Charge, Riot Blast, Riot Bomb, Heavy Riot Bomb (dirt removers)
-- [ ] Baby Digger, Digger, Heavy Digger, Baby Sandhog, Sandhog, Heavy Sandhog (tunnelers)
-- [ ] Dirt Clod, [x] Dirt Ball, [ ] Ton of Dirt, [ ] Liquid Dirt, [ ] Dirt Charge
-- [ ] Earth Disrupter (makes all floating dirt fall)
-- [ ] Plasma Blast, Laser
+- [x] Death's Head (nine apex warheads)
+- [x] Napalm, Hot Napalm (downhill pooling, depth-based heat and fifty burn cycles)
+- [x] Tracer, [x] Smoke Tracer (persistent path)
+- [x] Baby Roller, [x] Roller, [x] Heavy Roller (roll off enemy shields)
+- [x] Riot Charge, Riot Blast, Riot Bomb, Heavy Riot Bomb (harmless dirt removal; falls can hurt)
+- [x] Baby Digger, Digger, Heavy Digger, Baby Sandhog, Sandhog, Heavy Sandhog (bounded branching tunnelers)
+- [x] Dirt Clod, [x] Dirt Ball, [x] Ton of Dirt, [x] Liquid Dirt, [x] Dirt Charge (Extra Dirt supported)
+- [x] Earth Disrupter (forces floating dirt to fall, overriding Suspend Dirt)
+- [x] Plasma Blast, Laser (battery discharge, radiation, terrain cuts and shield interactions)
 
 ## Accessories / defense
-- [ ] Heat Guidance, Ballistic Guidance, Horizontal Guidance, Vertical Guidance
-- [ ] Lazy Boy (automatic aiming), Contact Trigger
-- [ ] Parachute, Battery (restores health), Fuel Tank
-- [ ] Shields: Mag Deflector, Shield, Force Shield, Heavy Shield, Super Mag
-- [ ] Auto Defense
+- [x] Heat Guidance, Ballistic Guidance, Horizontal Guidance, Vertical Guidance
+- [x] Lazy Boy (direct digging flight to a chosen point), Contact Trigger (one per shot chain)
+- [x] Parachute, Battery (restores health), Fuel Tank movement
+- [x] Shields: Mag Deflector, Shield, Force Shield, Heavy Shield, Super Mag
+- [x] Shield interception, reflection, magnetic force, overflow, self-hit bypass and strength HUD
+- [x] Super Mag stops lasers and converts their energy into shield charge (capped at 200)
+- [x] Auto Defense: buy once, annuity pricing and defensive setup before each round
 
 ## Economy
 - [x] Money earned for damage/kills/survival, lost for self/team damage and kills
-- [~] Opening purchases with Cash at Start; inter-round shop, accessories and selling are pending
+- [x] Opening and between-round shops: categories, paging, buying, partial bundles, inventory selling and status
+- [x] Full catalogue can be bought/stored/sold; all weapon and accessory effects are implemented
 - [x] Interest rate, starting cash and Computers Buy settings; exact integer cash/interest
-- [ ] Free market (prices move with demand)
-- [ ] Arms level (limits which weapons are available)
+- [x] Free market (prices move with demand; saved between games)
+- [x] Arms level and Useless Items shop filters
 - [x] Persistent inventory: starter ammo once per game, 99-item limit, unlimited Baby Missiles
 
 ## Computer players
-- [x] Moron, [~] Shooter, [~] Spoiler (wind-aware prototype aiming; original AI algorithms are batch 16)
-- [ ] Poolshark (banks off walls), Tosser (corrects aim), Chooser (picks best method), Cyborg (smart targeting)
-- [ ] Unknown (random personality)
-- [~] Bounded AI opening purchases; full buying personalities and shield/parachute use are pending
+- [x] Moron, Shooter, Poolshark, Tosser, Chooser, Spoiler and Cyborg aiming/targeting personalities
+- [x] Unknown rolls a hidden, stable personality once per game
+- [x] Tosser real-shot memory per target; Cyborg hostility/leader/weakness targeting
+- [x] Computer names avoid human and other computer names
+- [x] Weighted-random Moron buying and defensive-priority buying for other types
+- [x] Owned shield, parachute, battery, guidance/trigger and Riot dig-out use; bounded fuel movement
+- [~] Exact original AI search limits, buying weights/order and tactical thresholds await DOSBox comparison
 
 ## Presentation
 - [x] Low-res 640×480 framebuffer, chunky VGA look, 8×16 DOS-style font
 - [x] Single-row bevelled HUD (power, 0–90 angle, player, weapon icon and ammo); wind in the sky
 - [x] Explosions with colour cycling
-- [x] Projectile trails
-- [x] "Talking tanks" speech bubbles (own phrases, not the original's)
-- [ ] Tank death animations (several different kinds in original)
-- [ ] PC-speaker-style sound effects
+- [x] Trace Paths, persistent Smoke Tracer, Bomb Icon modes and explosion Scale
+- [x] Talking Tanks modes/probability, own phrases and custom attack/death files (blank/repeated line weighting)
+- [x] Eight random tank death animations, preserving death-blast damage and credit
+- [x] Full-radius red/black nuclear plasma: one-second growth, two-second shimmer, then crater
+- [x] Optional integer-scaled fullscreen (Hardware/F11)
+- [x] Generated PC-speaker-style effects: firing, explosions, deaths, shields, earth weapons and clicks
+- [x] Sound on/off and Off/POS/VEL flight tones, single-voice playback
 - [x] Original menu layout, all seven option dialogs, Save Changes and TOML config (pending gameplay options are greyed out)
-- [~] Mouse control (menus and controller setup; battlefield controls are pending)
-- [ ] Save/restore game (System Menu), Mass Kill, Retreat
-- [ ] Tank Control Panel, Inventory Panel, Status Bar
-- [ ] Configurable keys (6 per player in Simultaneous mode)
+- [x] Mouse-only match controls: aiming/held adjustment, weapon cycling, both-button fire, panels, shop, prompts and standings
+- [x] Paused System Menu, Clear Screen, exact Mass Kill, player/team reassignment, Sound, confirmed New Game/Quit
+- [x] Save from the buying screen, restore through the System Menu, filename entry and overwrite confirmation
+- [x] Persistent top-ten hall of fame per scoring mode, including Corporate banks and keyboard/mouse browsing
+- [x] Coloured player editor with names, human/computer switching, icons and team assignment
+- [x] Tank Control Panel, battlefield Inventory Panel, optional Status Bar
+- [x] Status/tank information, No Kibitzing and confirmed helicopter retreat
+- [x] Owned shield selection and engagement from panels, inventory and shortcuts
+- [x] Guidance targeting, consumption/reset, steering and Contact Trigger shot effects; fuel movement and fixed-shape restrictions
+- [x] Six configurable keys per human in Simultaneous mode, duplicate checks and settings persistence
