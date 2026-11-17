@@ -1382,9 +1382,16 @@ pub(crate) fn update_menu(
 }
 
 fn hotkey_text(fb: &mut Fb, x: i32, y: i32, label: &str, key: char, color: Rgb, hot: Rgb) {
-    fb.text(x, y, label, color);
-    if let Some(index) = label.chars().position(|ch| ch.to_ascii_uppercase() == key) {
-        fb.text(x + index as i32 * 8, y, &key.to_string(), hot);
+    let shortcut = label.chars().position(|ch| ch.to_ascii_uppercase() == key);
+    for (index, ch) in label.chars().enumerate() {
+        fb.text(
+            x + index as i32 * 8,
+            y,
+            &ch.to_string(),
+            if Some(index) == shortcut { hot } else { color },
+        );
+    }
+    if let Some(index) = shortcut {
         fb.line(
             x + index as i32 * 8,
             y + 16,

@@ -12,11 +12,12 @@ pub enum Command {
     Sound,
     Save,
     Restore,
+    ResetDefaults,
     NewGame,
     Quit,
 }
 impl Command {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::Clear,
         Self::MassKill,
         Self::Players,
@@ -24,6 +25,7 @@ impl Command {
         Self::Sound,
         Self::Save,
         Self::Restore,
+        Self::ResetDefaults,
         Self::NewGame,
         Self::Quit,
     ];
@@ -36,6 +38,7 @@ impl Command {
             Self::Sound => "S Sound on/off",
             Self::Save => "V Save Game",
             Self::Restore => "R Restore Game",
+            Self::ResetDefaults => "O Reset Options to Defaults",
             Self::NewGame => "N New Game",
             Self::Quit => "Q Quit",
         }
@@ -43,6 +46,7 @@ impl Command {
     pub fn enabled(self, game: bool, round: bool, buying: bool) -> bool {
         match self {
             Self::Save => buying,
+            Self::ResetDefaults => !game,
             Self::MassKill => round,
             Self::Clear | Self::Players | Self::Teams => game,
             _ => true,
@@ -100,16 +104,18 @@ impl System {
         if input.escape || input.hotkey == Some('D') {
             return Request::Close;
         }
-        self.row = self.row.min(9);
+        let done = Command::ALL.len();
+        let count = done + 1;
+        self.row = self.row.min(done);
         if input.up {
-            self.row = (self.row + 9) % 10;
+            self.row = (self.row + count - 1) % count;
         }
         if input.down {
-            self.row = (self.row + 1) % 10;
+            self.row = (self.row + 1) % count;
         }
         let mut activate = input.activate;
         if let Some(key) = input.hotkey {
-            if let Some(row) = ['C', 'M', 'P', 'T', 'S', 'V', 'R', 'N', 'Q']
+            if let Some(row) = ['C', 'M', 'P', 'T', 'S', 'V', 'R', 'O', 'N', 'Q']
                 .iter()
                 .position(|&k| k == key)
             {
@@ -118,7 +124,7 @@ impl System {
             }
         }
         if let Some((x, y, 1)) = input.click {
-            if (104..536).contains(&x) && (104..344).contains(&y) {
+            if (104..536).contains(&x) && (104..104 + count as i32 * 24).contains(&y) {
                 self.row = ((y - 104) / 24) as usize;
                 activate = true;
             }
@@ -126,16 +132,16 @@ impl System {
         if !activate {
             return Request::None;
         }
-        if self.row == 9 {
+        if self.row == done {
             return Request::Close;
         }
         let command = Command::ALL[self.row];
         if !command.enabled(game, round, self.can_save) {
             self.panel = Panel::Message(
-                if command == Command::Save {
-                    "Save Game is available only from the buying screen."
-                } else {
-                    "This action is not available here."
+                match command {
+                    Command::Save => "Save Game is available only from the buying screen.",
+                    Command::ResetDefaults => "Return to the main menu before resetting options.",
+                    _ => "This action is not available here.",
                 }
                 .into(),
             );
@@ -143,7 +149,7 @@ impl System {
         }
         if matches!(
             command,
-            Command::MassKill | Command::NewGame | Command::Quit
+            Command::MassKill | Command::NewGame | Command::Quit | Command::ResetDefaults
         ) {
             self.panel = Panel::Confirm(command);
             Request::None
@@ -154,18 +160,20 @@ impl System {
     pub fn draw(&self, fb: &mut Fb, game: bool, round: bool) {
         match &self.panel {
             Panel::Menu => {
-                fb.bevel(96, 64, 448, 324);
+                fb.bevel(96, 64, 448, 348);
+                let done = Command::ALL.len();
                 fb.text(112, 76, "SYSTEM MENU", Rgb::BLACK);
-                for row in 0..10 {
+                for row in 0..=done {
                     let y = 104 + row as i32 * 24;
                     if row == self.row {
                         fb.frame(104, y - 2, 432, 23, Rgb::DARK);
                     }
-                    let enabled = row == 9 || Command::ALL[row].enabled(game, round, self.can_save);
+                    let enabled =
+                        row == done || Command::ALL[row].enabled(game, round, self.can_save);
                     fb.text(
                         112,
                         y,
-                        if row == 9 {
+                        if row == done {
                             "D Done / Resume"
                         } else {
                             Command::ALL[row].label()
@@ -177,20 +185,22 @@ impl System {
                         },
                     );
                 }
-                fb.text(112, 364, "Esc/F1: resume", Rgb::DARK);
+                fb.text(112, 388, "Esc/F1: resume", Rgb::DARK);
             }
-            Panel::Confirm(command) => crate::ui::dialog(
-                fb,
-                &[
-                    match command {
-                        Command::MassKill => "Mass kill everyone?",
-                        Command::NewGame => "Start a new game?",
-                        _ => "Quit the game?",
-                    }
-                    .into(),
-                    "Y: confirm   N/Esc: cancel".into(),
-                ],
-            ),
+            Panel::Confirm(command) => {
+                let mut lines = vec![match command {
+                    Command::MassKill => "Mass kill everyone?",
+                    Command::NewGame => "Start a new game?",
+                    Command::ResetDefaults => "Reset all options and player setup to defaults?",
+                    _ => "Quit the game?",
+                }
+                .into()];
+                if *command == Command::ResetDefaults {
+                    lines.push("Use Save Changes to keep defaults next launch.".into());
+                }
+                lines.push("Y: confirm   N/Esc: cancel".into());
+                crate::ui::dialog(fb, &lines);
+            }
             Panel::Message(text) => {
                 let mut lines = crate::ui::wrap_text(text, 58);
                 lines.truncate(18);

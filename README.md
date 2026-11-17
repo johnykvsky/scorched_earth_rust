@@ -52,6 +52,9 @@ or copy that single file anywhere; it has no other files to go with it.
 
 The window opens at 1280×960 (the 640×480 game doubled) and can be resized;
 the picture is scaled by whole numbers when it fits, keeping pixels sharp.
+On Linux/X11, the game requests keyboard focus once after its first frame, so
+keyboard controls work when launched from a terminal. Switching to another
+window afterward does not trigger another focus request.
 
 ## How to play
 
@@ -207,6 +210,11 @@ that balance, with interest paid once per bank. Stock remains individual and
 standings show each bank once. Vicious becomes a free-for-all inside the last
 team; the configured teams return next round.
 
+**Esc** on the battlefield asks before returning to the main menu. The prompt
+pauses gameplay and audio; Y or **Yes** confirms, while N, Esc or **No / Cancel**
+resumes the match. Open panels and targeting prompts use Esc to close/cancel
+first. Esc from the main menu asks before quitting, with the same controls.
+
 **F1 / Alt-S** opens the System Menu and pauses the current action and timers.
 Esc/F1 resumes. It provides:
 
@@ -217,6 +225,11 @@ Esc/F1 resumes. It provides:
   Edits apply with Done; Esc cancels. Regrouping Corporate banks splits old
   funds equally before merging new banks, preserving the total money.
 - **Sound:** toggles audio.
+- **Reset Options to Defaults** (`O`): available from the main menu. After
+  confirmation, restores all options and player setup, including key bindings,
+  to built-in defaults. Choose **Save Changes** to keep them for the next launch.
+  Saved games, hall-of-fame records and market data are retained. Return to the
+  main menu first when a match is in progress.
 - **New Game / Quit:** require confirmation.
 - **Save Game / Restore Game:** save only from the buying screen; restore from
   any phase, including the title screen. Keyboard shortcuts inside the System
@@ -264,8 +277,7 @@ To export hall-of-fame and main-menu previews:
 SCORCHED_HALL_PREVIEW_DIR=/tmp/scorched-hall cargo test hall_of_fame_previews
 ```
 Battlefield terrain, active shots and options are excluded. Restore returns to
-shopping and generates a new battlefield when shopping ends. The optional hall
-of fame remains deferred.
+shopping and generates a new battlefield when shopping ends.
 
 To export saved-game dialog previews without opening a window:
 
@@ -846,6 +858,7 @@ SCORCHED_PRESENTATION_PREVIEW_DIR=/tmp/scorched-presentation cargo test
 - `src/system.rs` – paused System Menu and confirmation flow
 - `src/saved_game.rs` – versioned shop checkpoints, validation and atomic persistence
 - `src/hall_of_fame.rs` – exact final-score records, per-mode rankings, persistence and board
+- `src/window.rs` – one-time Linux/X11 startup activation
 - `src/speech.rs` – attack/death phrase loading and weighted silence
 - `src/presentation.rs` – death effects and nuclear plasma rendering
 - `src/liquid.rs` – shared fluid flow, napalm pooling/burning and Liquid Dirt deposition

@@ -10,6 +10,9 @@ serde = { version = "1", features = ["derive"] }
 toml = "1"
 dirs = "7"
 
+[target.'cfg(target_os = "linux")'.dependencies]
+x11rb = "0.13"
+
 # Keep debug builds fast enough to play (pixel loops are hot).
 [profile.dev]
 opt-level = 1

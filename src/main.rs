@@ -27,6 +27,7 @@ mod tank;
 mod terrain;
 mod ui;
 mod weapons;
+mod window;
 
 use macroquad::prelude::*;
 
@@ -36,6 +37,10 @@ fn conf() -> Conf {
         window_width: gfx::W * 2,
         window_height: gfx::H * 2,
         window_resizable: true,
+        platform: miniquad::conf::Platform {
+            linux_wm_class: window::startup_class(),
+            ..Default::default()
+        },
         ..Default::default()
     }
 }
@@ -64,6 +69,7 @@ async fn main() {
     };
 
     let mut fullscreen = false;
+    let mut startup_activation = true;
     loop {
         if is_key_pressed(KeyCode::F11) {
             game.toggle_fullscreen();
@@ -97,5 +103,9 @@ async fn main() {
             },
         );
         next_frame().await;
+        if startup_activation {
+            window::activate_on_startup();
+            startup_activation = false;
+        }
     }
 }

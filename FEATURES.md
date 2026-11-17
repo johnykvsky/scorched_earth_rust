@@ -91,11 +91,14 @@ Status legend: [x] in prototype · [~] partial/simplified · [ ] not yet
 - [x] Eight random tank death animations, preserving death-blast damage and credit
 - [x] Full-radius red/black nuclear plasma: one-second growth, two-second shimmer, then crater
 - [x] Optional integer-scaled fullscreen (Hardware/F11)
+- [x] One-time keyboard focus request on Linux/X11 startup
 - [x] Generated PC-speaker-style effects: firing, explosions, deaths, shields, earth weapons and clicks
 - [x] Sound on/off and Off/POS/VEL flight tones, single-voice playback
 - [x] Original menu layout, all seven option dialogs, Save Changes and TOML config (pending gameplay options are greyed out)
 - [x] Mouse-only match controls: aiming/held adjustment, weapon cycling, both-button fire, panels, shop, prompts and standings
 - [x] Paused System Menu, Clear Screen, exact Mass Kill, player/team reassignment, Sound, confirmed New Game/Quit
+- [x] Esc confirmations before leaving the battlefield or quitting from the main menu
+- [x] Confirmed reset of all options and player setup from the main-menu System menu; Save Changes persists defaults
 - [x] Save from the buying screen, restore through the System Menu, filename entry and overwrite confirmation
 - [x] Persistent top-ten hall of fame per scoring mode, including Corporate banks and keyboard/mouse browsing
 - [x] Coloured player editor with names, human/computer switching, icons and team assignment

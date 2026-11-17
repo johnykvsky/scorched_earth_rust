@@ -63,7 +63,14 @@ enum Phase {
     GameOver,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ExitConfirmation {
+    MainMenu,
+    Quit,
+}
+
 pub struct Game {
+    exit_confirmation: Option<ExitConfirmation>,
     concurrent: crate::modes::Battle,
     system: Option<crate::system::System>,
     edit_settings: Option<Settings>,
@@ -127,6 +134,7 @@ pub struct Game {
 impl Game {
     pub fn new() -> Self {
         Game {
+            exit_confirmation: None,
             concurrent: crate::modes::Battle::default(),
             system: None,
             edit_settings: None,
@@ -256,6 +264,43 @@ impl Game {
     fn set_phase(&mut self, p: Phase) {
         self.phase = p;
         self.phase_t = 0.0;
+    }
+
+    fn confirm_exit(&mut self, action: ExitConfirmation) {
+        self.exit_confirmation = Some(action);
+        self.sounds.post(Cue::Click);
+    }
+
+    fn battle_escape(&mut self) -> bool {
+        if matches!(
+            self.phase,
+            Phase::Aim | Phase::Resolve | Phase::Simultaneous
+        ) && self.controls.is_closed()
+        {
+            self.confirm_exit(ExitConfirmation::MainMenu);
+            return true;
+        }
+        false
+    }
+
+    fn exit_confirmation_input(&mut self, input: &ui::MenuInput) -> bool {
+        let button = ui::button_index(input, 2);
+        if input.escape || input.hotkey == Some('N') || button == Some(1) {
+            self.exit_confirmation = None;
+            self.sounds.post(Cue::Click);
+        } else if input.hotkey == Some('Y') || button == Some(0) {
+            let action = self.exit_confirmation.take();
+            self.sounds.post(Cue::Click);
+            match action {
+                Some(ExitConfirmation::Quit) => return false,
+                Some(ExitConfirmation::MainMenu) => {
+                    self.terrain = Terrain::generate();
+                    self.set_phase(Phase::Menu);
+                }
+                None => {}
+            }
+        }
+        true
     }
 
     fn fast_scale(&self) -> f32 {
@@ -592,6 +637,11 @@ impl Game {
             Request::Run(command) => match command {
                 Command::Clear => self.clear_traces(),
                 Command::Sound => self.settings.sound.enabled = !self.settings.sound.enabled,
+                Command::ResetDefaults => {
+                    self.settings = Settings::default();
+                    self.menu = MenuState::default();
+                    system.panel = Panel::Message("Default options and player setup restored.\nUse Save Changes to keep defaults next launch.".into());
+                }
                 Command::Players => {
                     self.stage_players();
                     system.panel = Panel::Players;
@@ -808,7 +858,9 @@ impl Game {
 
     pub fn take_sound_frame(&mut self) -> sound::Frame {
         let cues = self.sounds.take();
-        let enabled = self.settings.sound.enabled && self.system.is_none();
+        let enabled = self.settings.sound.enabled
+            && self.system.is_none()
+            && self.exit_confirmation.is_none();
         let flight = if enabled && matches!(self.phase, Phase::Resolve | Phase::Simultaneous) {
             self.projs
                 .iter()
@@ -847,6 +899,10 @@ impl Game {
     /// Returns false when the player wants to quit.
     pub fn update(&mut self, dt: f32) -> bool {
         self.keys.dt = dt;
+        if self.exit_confirmation.is_some() {
+            let input = ui::MenuInput::poll(&mut self.keys);
+            return self.exit_confirmation_input(&input);
+        }
         if self.hall_open {
             let input = ui::MenuInput::poll(&mut self.keys);
             self.hall_input(&input);
@@ -878,6 +934,9 @@ impl Game {
         if self.system.is_some() {
             let input = ui::MenuInput::poll(&mut self.keys);
             return self.system_input(&input);
+        }
+        if self.shop_notice.is_none() && is_key_pressed(KeyCode::Escape) && self.battle_escape() {
+            return true;
         }
         let dt = dt * self.fast_scale();
         self.time += dt;
@@ -915,7 +974,7 @@ impl Game {
                     self.sounds.post(Cue::Click);
                 }
                 match action {
-                    MenuAction::Quit => return false,
+                    MenuAction::Quit => self.confirm_exit(ExitConfirmation::Quit),
                     MenuAction::Start => match self.settings.validate() {
                         Ok(()) => self.start_game(),
                         Err(error) => self.menu.notice = Some(error),
@@ -970,12 +1029,6 @@ impl Game {
                     self.defense_player += 1;
                     self.advance_defense();
                 }
-            }
-            Phase::Aim | Phase::Resolve
-                if is_key_pressed(KeyCode::Escape) && self.controls.is_closed() =>
-            {
-                self.terrain = Terrain::generate();
-                self.set_phase(Phase::Menu);
             }
             Phase::Aim => self.update_aim(dt),
             Phase::Move => {
@@ -2994,6 +3047,26 @@ impl Game {
     // ------------------------------------------------------------ drawing
 
     pub fn draw(&self, fb: &mut Fb) {
+        self.draw_scene(fb);
+        if let Some(action) = self.exit_confirmation {
+            ui::dialog(
+                fb,
+                &[
+                    match action {
+                        ExitConfirmation::MainMenu => {
+                            "Are you sure you want to return to the main menu?"
+                        }
+                        ExitConfirmation::Quit => "Are you sure you want to quit the game?",
+                    }
+                    .into(),
+                    "Y: confirm   N/Esc: cancel".into(),
+                ],
+            );
+            ui::mouse_buttons(fb, &["Yes", "No / Cancel"]);
+        }
+    }
+
+    fn draw_scene(&self, fb: &mut Fb) {
         if self.hall_open {
             crate::hall_of_fame::draw(fb, &self.hall, self.hall_mode, self.hall_notice.as_deref());
             return;
@@ -3240,6 +3313,137 @@ impl Game {
 mod tests {
     use super::*;
     use crate::ui::{aim_repeat_steps, display_angle};
+
+    #[test]
+    fn escape_confirmation_cancel_preserves_battle_and_requires_explicit_yes() {
+        for phase in [Phase::Aim, Phase::Resolve, Phase::Simultaneous] {
+            let mut g = energy_game(ItemId::Missile, 0);
+            g.fire();
+            g.set_phase(phase);
+            let terrain: Vec<_> = (0..W).map(|x| g.terrain.surface(x)).collect();
+            let shot_position = g.projs[0].pos;
+            let stock = g.tanks[0].inventory.clone();
+            let clock = g.time;
+            for cancel in [
+                ui::MenuInput {
+                    escape: true,
+                    ..Default::default()
+                },
+                ui::MenuInput {
+                    hotkey: Some('N'),
+                    ..Default::default()
+                },
+                ui::MenuInput {
+                    click: Some((450, 410, 1)),
+                    ..Default::default()
+                },
+            ] {
+                assert!(g.battle_escape());
+                assert_eq!(g.exit_confirmation, Some(ExitConfirmation::MainMenu));
+                assert!(!g.take_sound_frame().enabled);
+                assert!(g.exit_confirmation_input(&ui::MenuInput {
+                    activate: true,
+                    ..Default::default()
+                }));
+                assert!(g.exit_confirmation.is_some());
+                assert!(g.exit_confirmation_input(&cancel));
+                assert!(g.exit_confirmation.is_none());
+                assert!(g.phase == phase);
+                assert_eq!(
+                    (0..W).map(|x| g.terrain.surface(x)).collect::<Vec<_>>(),
+                    terrain
+                );
+                assert_eq!(g.projs[0].pos, shot_position);
+                assert_eq!(g.tanks[0].inventory, stock);
+                assert_eq!(g.time, clock);
+            }
+            g.battle_escape();
+            assert!(g.exit_confirmation_input(&ui::MenuInput {
+                hotkey: Some('Y'),
+                ..Default::default()
+            }));
+            assert!(g.phase == Phase::Menu && g.exit_confirmation.is_none());
+        }
+    }
+
+    #[test]
+    fn escape_confirmation_quit_cancel_confirm_and_subpanel_precedence() {
+        let mut g = Game::new();
+        assert_eq!(
+            g.menu.handle(
+                &mut g.settings,
+                &ui::MenuInput {
+                    escape: true,
+                    ..Default::default()
+                }
+            ),
+            MenuAction::Quit
+        );
+        for yes in [
+            ui::MenuInput {
+                hotkey: Some('Y'),
+                ..Default::default()
+            },
+            ui::MenuInput {
+                click: Some((150, 410, 1)),
+                ..Default::default()
+            },
+        ] {
+            g.exit_confirmation = Some(ExitConfirmation::Quit);
+            assert!(g.exit_confirmation_input(&ui::MenuInput {
+                escape: true,
+                ..Default::default()
+            }));
+            assert!(g.exit_confirmation.is_none() && g.phase == Phase::Menu);
+            g.exit_confirmation = Some(ExitConfirmation::Quit);
+            assert!(!g.exit_confirmation_input(&yes));
+        }
+        let mut g = energy_game(ItemId::Missile, 0);
+        g.set_phase(Phase::Aim);
+        g.controls.panel = controls::Panel::Inventory;
+        assert!(!g.battle_escape());
+        g.controls.panel = controls::Panel::Closed;
+        for phase in [Phase::Target, Phase::Batteries, Phase::Move, Phase::Shop] {
+            g.set_phase(phase);
+            assert!(!g.battle_escape());
+            assert!(g.exit_confirmation.is_none());
+        }
+        g.set_phase(Phase::Aim);
+        g.battle_escape();
+        assert!(g.exit_confirmation_input(&ui::MenuInput {
+            click: Some((150, 410, 1)),
+            ..Default::default()
+        }));
+        assert!(g.phase == Phase::Menu);
+    }
+
+    #[test]
+    fn escape_confirmation_previews() {
+        let Ok(directory) = std::env::var("SCORCHED_EXIT_PREVIEW_DIR") else {
+            return;
+        };
+        std::fs::create_dir_all(&directory).unwrap();
+        let mut g = energy_game(ItemId::Missile, 0);
+        let mut fb = Fb::new();
+        for action in [ExitConfirmation::MainMenu, ExitConfirmation::Quit] {
+            g.set_phase(if action == ExitConfirmation::Quit {
+                Phase::Menu
+            } else {
+                Phase::Aim
+            });
+            g.exit_confirmation = Some(action);
+            g.draw(&mut fb);
+            let mut image = fb.img.clone();
+            image.bytes = image
+                .bytes
+                .chunks_exact((W * 4) as usize)
+                .rev()
+                .flatten()
+                .copied()
+                .collect();
+            image.export_png(&format!("{directory}/{action:?}.png"));
+        }
+    }
 
     fn concurrent_game(mode: PlayMode, players: usize) -> Game {
         let mut g = Game::new();
@@ -3770,6 +3974,122 @@ mod tests {
         game.start_game();
         assert!(game.phase == Phase::Shop);
         (game, directory)
+    }
+
+    #[test]
+    fn reset_defaults_confirms_resets_all_options_and_saves_only_on_request() {
+        use crate::system::{Command, Panel, System};
+        let (mut g, directory) = saved_game_test();
+        let checkpoint = directory.join("checkpoint.toml");
+        g.checkpoint().unwrap().save(&checkpoint).unwrap();
+        let checkpoint_bytes = std::fs::read(&checkpoint).unwrap();
+        g.hall
+            .record(&g.tanks, &g.prices, g.settings.economics.scoring, 1);
+        let hall_path = directory.join("hall_of_fame.toml");
+        g.hall.save(&hall_path).unwrap();
+        let hall_bytes = std::fs::read(&hall_path).unwrap();
+        g.settings.sound.enabled = false;
+        g.settings.hardware.fullscreen = true;
+        g.settings.physics.gravity = 0.8;
+        g.settings.landscape.sky = crate::settings::Sky::Cavern;
+        g.settings.landscape.mountains_folder = Some("mountains".into());
+        g.settings.play.teams = TeamMode::Corporate;
+        g.settings.play.attack_comments = Some("attack.cfg".into());
+        g.settings.weapons.arms_level = 1;
+        g.settings.names[0] = "Custom name".into();
+        let customized = g.settings.clone();
+        let config = g.config_path.clone().unwrap();
+        customized.save(&config).unwrap();
+        let config_bytes = std::fs::read(&config).unwrap();
+        let market = toml::to_string(&g.market).unwrap();
+        let stock = g.tanks[0].inventory.clone();
+        let cash = g.tanks[0].account.cash.clone();
+        g.set_phase(Phase::Menu);
+        g.system = Some(System::default());
+        system_key(&mut g, 'O');
+        assert_eq!(
+            g.system.as_ref().unwrap().panel,
+            Panel::Confirm(Command::ResetDefaults)
+        );
+        g.system_input(&ui::MenuInput {
+            escape: true,
+            ..Default::default()
+        });
+        assert_eq!(g.settings, customized);
+        // The visible reset row is also reachable with the mouse.
+        g.system_input(&mouse(200, 104 + 7 * 24));
+        assert_eq!(
+            g.system.as_ref().unwrap().panel,
+            Panel::Confirm(Command::ResetDefaults)
+        );
+        g.system_input(&mouse(150, 410));
+        assert_eq!(g.settings, Settings::default());
+        assert!(matches!(
+            g.system.as_ref().unwrap().panel,
+            Panel::Message(_)
+        ));
+        assert!(g.phase == Phase::Menu);
+        assert_eq!(std::fs::read(&config).unwrap(), config_bytes);
+        assert_eq!(std::fs::read(&checkpoint).unwrap(), checkpoint_bytes);
+        assert_eq!(std::fs::read(&hall_path).unwrap(), hall_bytes);
+        assert_eq!(toml::to_string(&g.market).unwrap(), market);
+        assert_eq!(g.tanks[0].inventory, stock);
+        assert_eq!(g.tanks[0].account.cash, cash);
+        g.save_settings();
+        assert_eq!(Settings::load(&config).unwrap(), Settings::default());
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn reset_defaults_is_unavailable_during_a_match() {
+        let mut g = energy_game(ItemId::Missile, 0);
+        let settings = g.settings.clone();
+        for phase in [
+            Phase::Aim,
+            Phase::Resolve,
+            Phase::Shop,
+            Phase::RoundOver,
+            Phase::GameOver,
+        ] {
+            g.set_phase(phase);
+            g.system = Some(crate::system::System::default());
+            system_key(&mut g, 'O');
+            assert!(
+                matches!(&g.system.as_ref().unwrap().panel, crate::system::Panel::Message(message) if message.contains("main menu"))
+            );
+            system_key(&mut g, 'Y');
+            assert_eq!(g.settings, settings);
+            assert!(g.phase == phase);
+        }
+    }
+
+    #[test]
+    fn reset_defaults_previews() {
+        let Ok(directory) = std::env::var("SCORCHED_DEFAULTS_PREVIEW_DIR") else {
+            return;
+        };
+        std::fs::create_dir_all(&directory).unwrap();
+        let mut g = Game::new();
+        let mut fb = Fb::new();
+        g.system = Some(crate::system::System::default());
+        for name in ["menu", "confirm", "restored"] {
+            if name == "confirm" {
+                system_key(&mut g, 'O');
+            }
+            if name == "restored" {
+                system_key(&mut g, 'Y');
+            }
+            g.draw(&mut fb);
+            let mut image = fb.img.clone();
+            image.bytes = image
+                .bytes
+                .chunks_exact((W * 4) as usize)
+                .rev()
+                .flatten()
+                .copied()
+                .collect();
+            image.export_png(&format!("{directory}/{name}.png"));
+        }
     }
 
     #[test]
